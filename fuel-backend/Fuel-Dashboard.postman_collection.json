@@ -1,0 +1,653 @@
+{
+  "info": {
+    "name": "Fuel Consumption Dashboard API",
+    "description": "Complete API collection for the Vehicle Fuel Consumption Dashboard backend built with NestJS.",
+    "_postman_id": "fuel-dashboard-api-v2",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000", "type": "string" },
+    { "key": "token",    "value": "", "type": "string", "description": "JWT token — auto-set after login" },
+    { "key": "imei",     "value": "47395226", "type": "string", "description": "JV-6213 vehicle IMEI" },
+    { "key": "from",     "value": "2026-04-01T00:00:00Z", "type": "string" },
+    { "key": "to",       "value": "2026-04-10T23:59:59Z", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] },
+            "description": "Check if the server is running. No authentication required."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Service is healthy\",\n  \"data\": { \"status\": \"ok\", \"timestamp\": \"2026-04-10T09:44:02.548Z\" }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.success && json.data && json.data.token) {",
+                  "    pm.collectionVariables.set('token', json.data.token);",
+                  "    console.log('Token saved:', json.data.token.substring(0, 30) + '...');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"your_password_here\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+            "description": "Login with username/password. JWT token is automatically saved to `token` variable."
+          },
+          "response": [
+            {
+              "name": "200 Login Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Login successful\",\n  \"data\": { \"token\": \"eyJhbGci...\", \"expiresIn\": \"24h\" }\n}"
+            },
+            {
+              "name": "401 Invalid Credentials",
+              "status": "Unauthorized",
+              "code": 401,
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid username or password\",\n  \"error\": \"UnauthorizedException\",\n  \"statusCode\": 401\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Vehicles",
+      "item": [
+        {
+          "name": "List All Vehicles",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/vehicles", "host": ["{{base_url}}"], "path": ["vehicles"] },
+            "description": "Returns all vehicles linked to the logged-in user including GPS, speed, lastSeen and online/offline status."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Vehicles fetched successfully\",\n  \"data\": {\n    \"count\": 1,\n    \"vehicles\": [\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"speed\": 0, \"lat\": 31.5497, \"lng\": 74.3436, \"lastSeen\": \"2026-04-10T09:10:00Z\", \"status\": \"online\", \"device\": \"\", \"model\": \"\", \"simNumber\": \"\" }\n    ]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Fuel (Per Vehicle)",
+      "item": [
+        {
+          "name": "List Fuel Sensors",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/sensors",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "sensors"]
+            },
+            "description": "List all fuel sensors for this vehicle. Use returned `sensorId` in other endpoints via `?sensorId=` for multi-tank vehicles."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"1 fuel sensor(s) found\",\n  \"data\": {\n    \"imei\": \"47395226\",\n    \"count\": 1,\n    \"sensors\": [\n      { \"sensorId\": 24321, \"name\": \"Fuel\", \"type\": \"fuel\", \"param\": \"fuel1\", \"units\": \"L\", \"formula\": null, \"hasCalibration\": true }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Current Fuel Level",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/current",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "current"],
+              "query": [
+                { "key": "sensorId", "value": "", "description": "Optional: specific tank sensorId", "disabled": true }
+              ]
+            },
+            "description": "Latest fuel level. Applies formula or calibration to raw sensor value."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Current fuel level fetched\",\n  \"data\": {\n    \"imei\": \"47395226\",\n    \"totalFuel\": 316.28,\n    \"unit\": \"L\",\n    \"tanks\": [ { \"sensorId\": 24321, \"sensorName\": \"Fuel\", \"fuel\": 316.28, \"unit\": \"L\", \"method\": \"calibration\" } ],\n    \"lastSeen\": \"2026-04-10T08:30:50.000Z\",\n    \"speed\": 0,\n    \"lat\": 31.5497,\n    \"lng\": 74.3436\n  }\n}"
+            },
+            {
+              "name": "403 Not Your Vehicle",
+              "status": "Forbidden",
+              "code": 403,
+              "body": "{\n  \"success\": false,\n  \"message\": \"You do not have permission to access this vehicle\",\n  \"error\": \"ForbiddenException\",\n  \"statusCode\": 403\n}"
+            }
+          ]
+        },
+        {
+          "name": "Fuel History — 15min",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/history?from={{from}}&to={{to}}&interval=15min",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "history"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" },
+                { "key": "interval", "value": "15min", "description": "5min | 15min | hour | day" },
+                { "key": "tz", "value": "Asia/Karachi", "description": "IANA timezone for output timestamps", "disabled": true },
+                { "key": "sensorId", "value": "", "disabled": true }
+              ]
+            },
+            "description": "Fuel level time series. DB-level bucketing — no data loss on long ranges.\n\nIntervals: `5min`, `15min`, `hour`, `day`\nAuto-selected if not given:\n- ≤1 day → 5min\n- 1-7 days → 15min\n- 7-30 days → hour\n- >30 days → day"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Fuel history fetched successfully\",\n  \"data\": {\n    \"imei\": \"47395226\",\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"interval\": \"15min\",\n    \"unit\": \"L\",\n    \"samples\": 441,\n    \"sensorId\": 24321,\n    \"sensorName\": \"Fuel\",\n    \"buckets\": [\n      { \"dt\": \"2026-04-06T00:00:00.000Z\", \"fuel\": 161.63, \"unit\": \"L\" },\n      { \"dt\": \"2026-04-06T00:15:00.000Z\", \"fuel\": 160.20, \"unit\": \"L\" }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Fuel History — Hour",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/history?from={{from}}&to={{to}}&interval=hour",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "history"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" },
+                { "key": "interval", "value": "hour" }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Fuel History — Day",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/history?from={{from}}&to={{to}}&interval=day",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "history"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" },
+                { "key": "interval", "value": "day" }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Fuel Consumption Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/consumption?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "consumption"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" },
+                { "key": "sensorId", "value": "", "description": "Optional: specific tank", "disabled": true }
+              ]
+            },
+            "description": "Total consumed, refueled, cost + all drop & refuel events.\n\nAlgorithm: delta < -0.5L → drop, delta > +3.0L → refuel, |delta| ≤ 0.5L → noise."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Fuel consumption calculated\",\n  \"data\": {\n    \"imei\": \"47395226\",\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"consumed\": 210.5,\n    \"refueled\": 581.64,\n    \"estimatedCost\": null,\n    \"unit\": \"L\",\n    \"refuelEvents\": 3,\n    \"samples\": 4502,\n    \"drops\": [ { \"at\": \"2026-04-06T07:15:00Z\", \"fuelBefore\": 356.79, \"fuelAfter\": 354.12, \"consumed\": 2.67, \"unit\": \"L\" } ],\n    \"refuels\": [\n      { \"at\": \"2026-04-06T07:27:42Z\", \"fuelBefore\": 161.63, \"fuelAfter\": 356.79, \"added\": 195.16, \"unit\": \"L\" },\n      { \"at\": \"2026-04-08T13:49:23Z\", \"fuelBefore\": 128.95, \"fuelAfter\": 350.88, \"added\": 221.93, \"unit\": \"L\" },\n      { \"at\": \"2026-04-10T05:25:59Z\", \"fuelBefore\": 188.91, \"fuelAfter\": 353.66, \"added\": 164.75, \"unit\": \"L\" }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Fuel Stats (Efficiency + Idle + Timeline)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/stats?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "stats"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" },
+                { "key": "sensorId", "value": "", "disabled": true }
+              ]
+            },
+            "description": "Full stats: avgDailyConsumption, km/L, L/100km, idleDrain, timeline (biggest drop/refuel, lowest/highest level)."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Fuel stats calculated\",\n  \"data\": {\n    \"imei\": \"47395226\",\n    \"consumed\": 210.5,\n    \"refueled\": 581.64,\n    \"estimatedCost\": null,\n    \"avgDailyConsumption\": 21.05,\n    \"efficiency\": { \"totalDistanceKm\": 1200.4, \"kmPerLiter\": 5.7, \"litersPer100km\": 17.5 },\n    \"idleDrain\": { \"liters\": 42.1, \"percentage\": 20.0 },\n    \"fuelTimeline\": {\n      \"biggestDrop\":   { \"at\": \"2026-04-05T08:00:00Z\", \"consumed\": 8.1, \"unit\": \"L\" },\n      \"biggestRefuel\": { \"at\": \"2026-04-08T13:49:23Z\", \"added\": 221.93, \"unit\": \"L\" },\n      \"lowestLevel\":  { \"at\": \"2026-04-08T13:40:00Z\", \"fuel\": 128.95, \"unit\": \"L\" },\n      \"highestLevel\": { \"at\": \"2026-04-06T07:30:00Z\", \"fuel\": 356.79, \"unit\": \"L\" }\n    },\n    \"refuelEvents\": 3,\n    \"totalDropEvents\": 85,\n    \"samples\": 4502\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Thrift Analysis",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/thrift?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "thrift"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" },
+                { "key": "sensorId", "value": "", "disabled": true }
+              ]
+            },
+            "description": "Full thrift analysis: highSpeedDrain, idleDrain, dailyTrend, thriftScore (0-100).\n\nScore tiers: 80-100=excellent, 60-79=good, 40-59=average, 0-39=poor"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Thrift analysis calculated\",\n  \"data\": {\n    \"imei\": \"47395226\",\n    \"consumed\": 210.5,\n    \"efficiency\": { \"totalDistanceKm\": 1200.4, \"kmPerLiter\": 5.7, \"litersPer100km\": 17.5 },\n    \"idleDrain\": { \"liters\": 42.1, \"percentage\": 20.0 },\n    \"highSpeedDrain\": { \"liters\": 18.2, \"percentage\": 8.6, \"events\": 12 },\n    \"dailyTrend\": [\n      { \"date\": \"2026-04-01\", \"consumed\": 21.5, \"distanceKm\": 120.4, \"kmPerLiter\": 5.6, \"rating\": \"average\" },\n      { \"date\": \"2026-04-02\", \"consumed\": 18.9, \"distanceKm\": 130.1, \"kmPerLiter\": 6.9, \"rating\": \"average\" }\n    ],\n    \"thriftScore\": { \"score\": 55, \"rating\": \"average\", \"breakdown\": { \"idlePenalty\": -8, \"overspeedPenalty\": -4, \"efficiencyPenalty\": -33 } },\n    \"samples\": 4502\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Refuel Events",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/refuels?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "refuels"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" }
+              ]
+            },
+            "description": "All refuel events (fuel increase > 3L) in the date range, sorted by time."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Refuel events fetched\",\n  \"data\": {\n    \"imei\": \"47395226\",\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"refuelEvents\": [\n      { \"sensorId\": 24321, \"sensorName\": \"Fuel\", \"at\": \"2026-04-06T07:27:42Z\", \"fuelBefore\": 161.63, \"fuelAfter\": 356.79, \"added\": 195.16, \"unit\": \"L\" },\n      { \"sensorId\": 24321, \"sensorName\": \"Fuel\", \"at\": \"2026-04-08T13:49:23Z\", \"fuelBefore\": 128.95, \"fuelAfter\": 350.88, \"added\": 221.93, \"unit\": \"L\" },\n      { \"sensorId\": 24321, \"sensorName\": \"Fuel\", \"at\": \"2026-04-10T05:25:59Z\", \"fuelBefore\": 188.91, \"fuelAfter\": 353.66, \"added\": 164.75, \"unit\": \"L\" }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Fuel Debug",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/{{imei}}/fuel/debug?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "{{imei}}", "fuel", "debug"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" }
+              ]
+            },
+            "description": "Debug: shows raw → transformed value chain (first 200 samples). Useful for diagnosing calibration/formula issues."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard (Fleet)",
+      "item": [
+        {
+          "name": "Fleet Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/dashboard/summary?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["dashboard", "summary"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" }
+              ]
+            },
+            "description": "Aggregated fuel summary for ALL user vehicles: consumed, refueled, cost per vehicle + fleet totals."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Dashboard summary fetched successfully\",\n  \"data\": {\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"vehicles\": [\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"consumed\": 210.5, \"refueled\": 581.64, \"cost\": null, \"lastSeen\": \"2026-04-10T08:30:50Z\", \"status\": \"online\", \"currentFuel\": 316.28, \"unit\": \"L\" }\n    ],\n    \"totals\": { \"consumed\": 210.5, \"cost\": null }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Fleet Ranking (Thrift Leaderboard)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/dashboard/fleet-ranking?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["dashboard", "fleet-ranking"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to", "value": "{{to}}" }
+              ]
+            },
+            "description": "All vehicles ranked by thrift score (1=best). Includes best/worst badges."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Fleet ranking calculated\",\n  \"data\": {\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"ranking\": [\n      { \"rank\": 1, \"imei\": \"AAA\", \"name\": \"Corolla\", \"plateNumber\": \"ABC-123\", \"kmPerLiter\": 12.1, \"litersPer100km\": 8.3, \"consumed\": 18.5, \"totalDistanceKm\": 224, \"thriftScore\": 84, \"thriftRating\": \"excellent\", \"badge\": \"best\" },\n      { \"rank\": 2, \"imei\": \"BBB\", \"name\": \"Land Cruiser\", \"plateNumber\": \"GHI-789\", \"kmPerLiter\": 4.2, \"litersPer100km\": 23.8, \"consumed\": 39.8, \"totalDistanceKm\": 167, \"thriftScore\": 28, \"thriftRating\": \"poor\", \"badge\": \"worst\" }\n    ],\n    \"bestVehicle\":  { \"rank\": 1, \"name\": \"Corolla\",      \"thriftScore\": 84, \"badge\": \"best\" },\n    \"worstVehicle\": { \"rank\": 2, \"name\": \"Land Cruiser\", \"thriftScore\": 28, \"badge\": \"worst\" }\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Reports (Fleet-Level)",
+      "item": [
+        {
+          "name": "Consumption Report",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/reports/consumption?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["reports", "consumption"],
+              "query": [
+                { "key": "from", "value": "{{from}}", "description": "Start UTC ISO 8601" },
+                { "key": "to",   "value": "{{to}}",   "description": "End UTC ISO 8601" }
+              ]
+            },
+            "description": "Fleet-level fuel consumption report.\n\nReturns per-vehicle: consumed, refueled, estimatedCost, refuelEvents.\nPlus fleet totals: total consumed, total refueled, total cost.\n\nVehicles with no data get status='no_data' and zero values."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Consumption report generated\",\n  \"report\": \"consumption\",\n  \"data\": {\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"totals\": { \"consumed\": 850.4, \"refueled\": 1800.0, \"cost\": null },\n    \"vehicles\": [\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"consumed\": 210.5, \"refueled\": 581.64, \"estimatedCost\": null, \"refuelEvents\": 3, \"unit\": \"L\", \"status\": \"ok\" },\n      { \"imei\": \"47988189\", \"name\": \"Karak-Gen\", \"plateNumber\": \"Karak\", \"consumed\": 0, \"refueled\": 0, \"estimatedCost\": null, \"refuelEvents\": 0, \"unit\": \"L\", \"status\": \"no_data\" }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Refueling Log Report",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/reports/refuels?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["reports", "refuels"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to",   "value": "{{to}}" }
+              ]
+            },
+            "description": "All refueling events across the entire fleet sorted by time.\n\nUse for voucher verification / fraud detection:\n- Driver bolta hai 200L dala but sensor shows only 50L → pakad sakte hain.\n\nEach event: imei, name, plateNumber, at, fuelBefore, fuelAfter, added, unit."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Refuels report generated\",\n  \"report\": \"refuels\",\n  \"data\": {\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"totalEvents\": 5,\n    \"totalAdded\": 920.5,\n    \"events\": [\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"at\": \"2026-04-06T07:27:42Z\", \"fuelBefore\": 161.63, \"fuelAfter\": 356.79, \"added\": 195.16, \"unit\": \"L\" },\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"at\": \"2026-04-08T13:49:23Z\", \"fuelBefore\": 128.95, \"fuelAfter\": 350.88, \"added\": 221.93, \"unit\": \"L\" }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Idle Waste Report",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/reports/idle-waste?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["reports", "idle-waste"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to",   "value": "{{to}}" }
+              ]
+            },
+            "description": "Fuel wasted while engine is ON but vehicle is parked (speed < 2 km/h, acc=1).\n\nSorted by worst offender (most idle liters first).\n\nUseful for identifying vehicles/drivers wasting fuel while parked."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Idle waste report generated\",\n  \"report\": \"idle-waste\",\n  \"data\": {\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"fleetTotals\": { \"idleLiters\": 185.4, \"totalConsumed\": 850.4, \"idlePercentage\": 21.8 },\n    \"vehicles\": [\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"totalConsumed\": 210.5, \"idleLiters\": 42.1, \"idlePercentage\": 20.0, \"unit\": \"L\", \"status\": \"ok\" }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "High Speed Waste Report",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/reports/high-speed?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["reports", "high-speed"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to",   "value": "{{to}}" }
+              ]
+            },
+            "description": "Fuel consumed while vehicle speed was above 100 km/h.\n\nSorted by worst offender.\n\nSpeedThreshold is 100 km/h. Useful for driver discipline reports."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"High speed waste report generated\",\n  \"report\": \"high-speed\",\n  \"data\": {\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"speedThresholdKmh\": 100,\n    \"fleetTotals\": { \"highSpeedLiters\": 68.2, \"totalConsumed\": 850.4, \"highSpeedPercentage\": 8.0 },\n    \"vehicles\": [\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"totalConsumed\": 210.5, \"highSpeedLiters\": 18.2, \"highSpeedPercentage\": 8.6, \"highSpeedEvents\": 12, \"unit\": \"L\", \"status\": \"ok\" }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Daily Trend Report",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/reports/daily-trend?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["reports", "daily-trend"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to",   "value": "{{to}}" }
+              ]
+            },
+            "description": "Per-vehicle daily consumption trend (consumed, distanceKm, km/L, rating) plus fleet-level aggregation per day.\n\nUseful for:\n- Weekly driver report card\n- Identifying heavy-use days\n- Trend charts"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Daily trend report generated\",\n  \"report\": \"daily-trend\",\n  \"data\": {\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"fleetDailyTrend\": [\n      { \"date\": \"2026-04-01\", \"consumed\": 85.0, \"distanceKm\": 480.2 },\n      { \"date\": \"2026-04-02\", \"consumed\": 78.5, \"distanceKm\": 415.1 }\n    ],\n    \"vehicles\": [\n      {\n        \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\",\n        \"unit\": \"L\", \"totalConsumed\": 210.5, \"status\": \"ok\",\n        \"dailyTrend\": [\n          { \"date\": \"2026-04-01\", \"consumed\": 21.5, \"distanceKm\": 120.4, \"kmPerLiter\": 5.6, \"rating\": \"average\" },\n          { \"date\": \"2026-04-02\", \"consumed\": 18.9, \"distanceKm\": 130.1, \"kmPerLiter\": 6.9, \"rating\": \"average\" }\n        ]\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Thrift Score Report",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/reports/thrift?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["reports", "thrift"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to",   "value": "{{to}}" }
+              ]
+            },
+            "description": "Per-vehicle thrift scores (0-100) with breakdown, sorted best→worst.\n\nHighlights:\n- `fleetAvgScore` — fleet average\n- `bestVehicle` / `worstVehicle`\n- Per vehicle: idleLiters, highSpeedLiters, kmPerLiter, thriftScore, thriftRating\n- `breakdown`: idlePenalty, overspeedPenalty, efficiencyPenalty\n\nUseful for monthly driver incentive/deduction decisions."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Thrift report generated\",\n  \"report\": \"thrift\",\n  \"data\": {\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"fleetAvgScore\": 58,\n    \"bestVehicle\":  { \"imei\": \"AAA\", \"name\": \"Corolla\", \"thriftScore\": 84, \"thriftRating\": \"excellent\" },\n    \"worstVehicle\": { \"imei\": \"CCC\", \"name\": \"Land Cruiser\", \"thriftScore\": 28, \"thriftRating\": \"poor\" },\n    \"vehicles\": [\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"consumed\": 210.5, \"unit\": \"L\", \"kmPerLiter\": 5.7, \"litersPer100km\": 17.5, \"totalDistanceKm\": 1200.4, \"idleLiters\": 42.1, \"idlePercentage\": 20.0, \"highSpeedLiters\": 18.2, \"highSpeedPercentage\": 8.6, \"thriftScore\": 55, \"thriftRating\": \"average\", \"breakdown\": { \"idlePenalty\": -8, \"overspeedPenalty\": -4, \"efficiencyPenalty\": -33 }, \"status\": \"ok\" }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Engine Hours Report",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/reports/engine-hours?from={{from}}&to={{to}}",
+              "host": ["{{base_url}}"],
+              "path": ["reports", "engine-hours"],
+              "query": [
+                { "key": "from", "value": "{{from}}" },
+                { "key": "to",   "value": "{{to}}" }
+              ]
+            },
+            "description": "Engine running hours per vehicle derived from the ignition signal (acc=1 in params).\n\nGaps > 30 minutes are excluded (prevents counting offline time as engine-on).\n\nReturns per vehicle: engineOnHours, avgHoursPerDay.\nFleet total: fleetTotalEngineHours.\nSorted by most engine hours first."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Engine hours report generated\",\n  \"report\": \"engine-hours\",\n  \"data\": {\n    \"from\": \"2026-04-01T00:00:00.000Z\",\n    \"to\": \"2026-04-10T23:59:59.000Z\",\n    \"fleetTotalEngineHours\": 342.5,\n    \"vehicles\": [\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"engineOnHours\": 85.4, \"avgHoursPerDay\": 8.54, \"totalSamples\": 4502, \"status\": \"ok\" }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Vehicle Status Report (No Date Range)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/reports/vehicle-status",
+              "host": ["{{base_url}}"],
+              "path": ["reports", "vehicle-status"]
+            },
+            "description": "Real-time snapshot of all vehicles — no date range needed.\n\nReturns per vehicle:\n- status: online / offline\n- lastSeen timestamp\n- minutesSinceLastSeen\n- currentFuel (liters)\n- speed, lat, lng\n- device, model, simNumber\n\nFleet summary: totalVehicles, online count, offline count.\n\nUseful for: operations room dashboard, daily morning status check."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"Vehicle status report generated\",\n  \"report\": \"vehicle-status\",\n  \"data\": {\n    \"generatedAt\": \"2026-04-10T14:30:00.000Z\",\n    \"totalVehicles\": 9,\n    \"online\": 8,\n    \"offline\": 1,\n    \"vehicles\": [\n      { \"imei\": \"47395226\", \"name\": \"JV-6213\", \"plateNumber\": \"JV-6213\", \"status\": \"online\", \"lastSeen\": \"2026-04-10T14:28:00Z\", \"minutesSinceLastSeen\": 2, \"speed\": 0, \"lat\": 31.5497, \"lng\": 74.3436, \"currentFuel\": 316.28, \"fuelUnit\": \"L\", \"device\": \"\", \"model\": \"\", \"simNumber\": \"\" },\n      { \"imei\": \"47988189\", \"name\": \"Wateen-Karak-Gen\", \"plateNumber\": \"\", \"status\": \"offline\", \"lastSeen\": null, \"minutesSinceLastSeen\": null, \"speed\": 0, \"lat\": 0, \"lng\": 0, \"currentFuel\": null, \"fuelUnit\": \"L\", \"device\": \"\", \"model\": \"\", \"simNumber\": \"\" }\n    ]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Error Scenarios",
+      "item": [
+        {
+          "name": "401 — No Token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/vehicles", "host": ["{{base_url}}"], "path": ["vehicles"] },
+            "description": "Request without Authorization header → 401 Unauthorized"
+          },
+          "response": []
+        },
+        {
+          "name": "403 — Wrong IMEI",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/vehicles/000000000000000/fuel/current",
+              "host": ["{{base_url}}"],
+              "path": ["vehicles", "000000000000000", "fuel", "current"]
+            },
+            "description": "IMEI not linked to this user → 403 Forbidden"
+          },
+          "response": []
+        },
+        {
+          "name": "400 — from > to",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/reports/consumption?from=2026-04-10T00:00:00Z&to=2026-04-01T00:00:00Z",
+              "host": ["{{base_url}}"],
+              "path": ["reports", "consumption"],
+              "query": [
+                { "key": "from", "value": "2026-04-10T00:00:00Z" },
+                { "key": "to",   "value": "2026-04-01T00:00:00Z" }
+              ]
+            },
+            "description": "from after to → 400 Bad Request"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

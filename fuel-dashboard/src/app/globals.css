@@ -1,0 +1,367 @@
+@import "tailwindcss";
+
+/* Leaflet popup fix — prevent Tailwind reset from breaking map popups */
+.leaflet-popup-content-wrapper {
+  border-radius: 14px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15) !important;
+  border: 1px solid #F0EFEF !important;
+  padding: 0 !important;
+}
+.leaflet-popup-content { margin: 14px 16px !important; }
+.leaflet-popup-tip-container { display: none !important; }
+.leaflet-container { font-family: inherit !important; }
+.leaflet-control-attribution { font-size: 9px !important; }
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+}
+
+/* ── Design tokens ─────────────────────────────────────────────────────────
+   Primary  : #E84040  (red)
+   BG app   : #F5F4F4  (warm off-white)
+   BG card  : #FFFFFF
+   Text-1   : #1A1A2E  (almost black)
+   Text-2   : #6B7280  (medium gray)
+   Text-3   : #9CA3AF  (light gray)
+   Border   : #EFEFEF
+──────────────────────────────────────────────────────────────────────────── */
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: #1A1A2E;
+}
+
+/* ══════════════════════════════════════════════
+   APP BACKGROUND
+══════════════════════════════════════════════ */
+.bg-app {
+  background: #F5F4F4;
+  min-height: 100vh;
+}
+
+/* ══════════════════════════════════════════════
+   SIDEBAR
+══════════════════════════════════════════════ */
+.app-sidebar {
+  background: #FFFFFF;
+  border-right: 1px solid #EFEFEF;
+  width: 220px;
+  flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════════
+   CARDS
+══════════════════════════════════════════════ */
+.card {
+  background: #FFFFFF;
+  border-radius: 16px;
+  border: 1px solid #F0EFEF;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.2s ease;
+}
+.card:hover { box-shadow: 0 6px 24px rgba(0, 0, 0, 0.09); }
+
+.card-flat {
+  background: #FAFAFA;
+  border-radius: 12px;
+  border: 1px solid #F0EFEF;
+}
+
+/* ══════════════════════════════════════════════
+   NAVIGATION
+══════════════════════════════════════════════ */
+.nav-item {
+  border-radius: 10px;
+  transition: background 0.15s ease, color 0.15s ease;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  width: 100%;
+  text-align: left;
+}
+.nav-item:hover { background: rgba(232, 64, 64, 0.06); }
+.nav-item:hover .nav-icon { color: #E84040; }
+
+.nav-active {
+  background: #E84040 !important;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(232, 64, 64, 0.28);
+}
+.nav-active .nav-icon,
+.nav-active .nav-label { color: #FFFFFF !important; }
+
+/* ══════════════════════════════════════════════
+   BUTTONS
+══════════════════════════════════════════════ */
+.btn-primary {
+  background: #E84040;
+  color: white;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 13px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.18s ease, box-shadow 0.18s ease, transform 0.15s ease;
+  box-shadow: 0 4px 14px rgba(232, 64, 64, 0.28);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-primary:hover {
+  background: #D63535;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(232, 64, 64, 0.35);
+}
+
+.btn-outline {
+  background: transparent;
+  color: #6B7280;
+  border-radius: 10px;
+  font-weight: 500;
+  font-size: 13px;
+  border: 1px solid #E8E8E8;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-outline:hover {
+  border-color: #E84040;
+  color: #E84040;
+  background: rgba(232, 64, 64, 0.04);
+}
+
+/* ══════════════════════════════════════════════
+   INPUTS
+══════════════════════════════════════════════ */
+.app-input {
+  background: #FFFFFF;
+  border: 1px solid #E8E8E8;
+  color: #1A1A2E;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 0.875rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  outline: none;
+}
+.app-input:focus {
+  border-color: #E84040;
+  box-shadow: 0 0 0 3px rgba(232, 64, 64, 0.1);
+}
+select.app-input option { background: white; color: #1A1A2E; }
+
+/* Search bar */
+.search-bar {
+  background: #F5F4F4;
+  border: 1px solid #EBEBEB;
+  border-radius: 10px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: border-color 0.2s ease;
+}
+.search-bar:focus-within { border-color: #E84040; }
+.search-bar input { background: transparent; border: none; outline: none; font-size: 13px; color: #1A1A2E; }
+.search-bar input::placeholder { color: #9CA3AF; }
+
+/* ══════════════════════════════════════════════
+   STATUS TAGS / BADGES
+══════════════════════════════════════════════ */
+.tag {
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  letter-spacing: 0.02em;
+  display: inline-block;
+}
+.tag-red      { background: #E84040; color: #FFF; }
+.tag-red-soft { background: rgba(232,64,64,0.1); color: #E84040; border: 1px solid rgba(232,64,64,0.2); }
+.tag-green    { background: rgba(34,197,94,0.1);  color: #16a34a; border: 1px solid rgba(34,197,94,0.2); }
+.tag-amber    { background: rgba(245,158,11,0.1); color: #b45309; border: 1px solid rgba(245,158,11,0.2); }
+.tag-blue     { background: rgba(59,130,246,0.1); color: #1d4ed8; border: 1px solid rgba(59,130,246,0.2); }
+.tag-gray     { background: #F5F4F4; color: #6B7280; border: 1px solid #E8E8E8; }
+
+/* alias for older code */
+.tag-critical { background: rgba(232,64,64,0.1);  color: #E84040; border: 1px solid rgba(232,64,64,0.2); }
+.tag-warning  { background: rgba(245,158,11,0.1); color: #b45309; border: 1px solid rgba(245,158,11,0.2); }
+.tag-active   { background: rgba(34,197,94,0.1);  color: #16a34a; border: 1px solid rgba(34,197,94,0.2); }
+.tag-info     { background: rgba(59,130,246,0.1); color: #1d4ed8; border: 1px solid rgba(59,130,246,0.2); }
+
+/* ══════════════════════════════════════════════
+   ICON BACKGROUNDS
+══════════════════════════════════════════════ */
+.icon-red    { background: #E84040; }
+.icon-red-soft { background: rgba(232,64,64,0.12); }
+.icon-sky    { background: linear-gradient(135deg, #38bdf8, #0ea5e9); }
+.icon-teal   { background: linear-gradient(135deg, #2dd4bf, #14b8a6); }
+.icon-green  { background: linear-gradient(135deg, #4ade80, #22c55e); }
+.icon-purple { background: linear-gradient(135deg, #c084fc, #a855f7); }
+.icon-amber  { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
+.icon-rose   { background: linear-gradient(135deg, #fb7185, #f43f5e); }
+.icon-indigo { background: linear-gradient(135deg, #818cf8, #6366f1); }
+
+/* ══════════════════════════════════════════════
+   PROGRESS BARS
+══════════════════════════════════════════════ */
+.progress-track {
+  background: #F0EFEF;
+  border-radius: 999px;
+  overflow: hidden;
+  height: 6px;
+}
+.progress-fill { height: 100%; border-radius: 999px; transition: width 0.7s ease; }
+
+/* ══════════════════════════════════════════════
+   LIST ROWS
+══════════════════════════════════════════════ */
+.list-row {
+  border-radius: 10px;
+  padding: 10px 12px;
+  transition: background 0.14s ease;
+  cursor: pointer;
+}
+.list-row:hover { background: rgba(232, 64, 64, 0.04); }
+
+/* ══════════════════════════════════════════════
+   BADGE COUNT
+══════════════════════════════════════════════ */
+.badge-count {
+  background: #E84040;
+  color: #FFFFFF;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  min-width: 20px;
+  text-align: center;
+}
+
+/* ══════════════════════════════════════════════
+   UPGRADE / PROMO CARD
+══════════════════════════════════════════════ */
+.upgrade-card {
+  background: linear-gradient(135deg, rgba(232,64,64,0.08), rgba(232,64,64,0.04));
+  border: 1px solid rgba(232,64,64,0.18);
+  border-radius: 14px;
+}
+
+/* ══════════════════════════════════════════════
+   DIVIDERS / SCROLLBARS
+══════════════════════════════════════════════ */
+.divider { border-color: #EFEFEF; }
+.scroll-panel { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #DCDCDC transparent; }
+.scroll-panel::-webkit-scrollbar { width: 4px; }
+.scroll-panel::-webkit-scrollbar-thumb { background: #DCDCDC; border-radius: 4px; }
+.scroll-panel::-webkit-scrollbar-thumb:hover { background: #C4C4C4; }
+
+/* ══════════════════════════════════════════════
+   ANIMATIONS
+══════════════════════════════════════════════ */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+.anim-1 { animation: fadeUp 0.4s ease 0.04s both; }
+.anim-2 { animation: fadeUp 0.4s ease 0.10s both; }
+.anim-3 { animation: fadeUp 0.4s ease 0.16s both; }
+.anim-4 { animation: fadeUp 0.4s ease 0.22s both; }
+.anim-5 { animation: fadeUp 0.4s ease 0.28s both; }
+
+/* ══════════════════════════════════════════════
+   SHIMMER / SKELETON
+══════════════════════════════════════════════ */
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.skeleton {
+  background: linear-gradient(90deg, #F0F0F0 0%, #E4E4E4 50%, #F0F0F0 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+/* ══════════════════════════════════════════════
+   GLASS INPUT PLACEHOLDER (login page)
+══════════════════════════════════════════════ */
+input.glass-placeholder::placeholder { color: rgba(255,255,255,0.4); }
+
+/* Inline style can't set ::placeholder — use this global rule scoped to login inputs */
+.login-glass-input::placeholder { color: rgba(255,255,255,0.38) !important; }
+
+/* ══════════════════════════════════════════════
+   RECHARTS OVERRIDES
+══════════════════════════════════════════════ */
+.recharts-cartesian-grid line { stroke: #F0EFEF !important; }
+.recharts-text { fill: #9CA3AF !important; }
+.recharts-default-tooltip {
+  background: #FFFFFF !important;
+  border: 1px solid #EFEFEF !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.10) !important;
+}
+
+/* ══════════════════════════════════════════════
+   CHIP / PILL (filter bar)
+══════════════════════════════════════════════ */
+.chip {
+  background: #FFFFFF;
+  border: 1px solid #E8E8E8;
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chip:hover, .chip-active {
+  border-color: #E84040;
+  color: #E84040;
+  background: rgba(232,64,64,0.05);
+}
+.chip-filled {
+  background: #E84040;
+  border-color: #E84040;
+  color: #FFFFFF;
+}
+
+/* ══════════════════════════════════════════════
+   RIGHT PANEL
+══════════════════════════════════════════════ */
+.right-panel {
+  background: #FFFFFF;
+  border-left: 1px solid #EFEFEF;
+  width: 300px;
+  flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════════
+   STAT HIGHLIGHT BOX
+══════════════════════════════════════════════ */
+.stat-red-box {
+  background: #E84040;
+  border-radius: 14px;
+  color: #FFFFFF;
+  padding: 20px;
+}
+
+/* ══════════════════════════════════════════════
+   LEGACY ALIASES (backward compat)
+══════════════════════════════════════════════ */
+.glass-card       { background: #FFFFFF; border-radius: 16px; border: 1px solid #F0EFEF; box-shadow: 0 2px 12px rgba(0,0,0,0.05); transition: box-shadow 0.2s ease; }
+.glass-card:hover { box-shadow: 0 6px 24px rgba(0,0,0,0.09); }
+.glass-card-flat  { background: #FAFAFA; border-radius: 12px; border: 1px solid #F0EFEF; }
+.glass-sidebar    { background: #FFFFFF; border-right: 1px solid #EFEFEF; width: 220px; flex-shrink: 0; }
+.glass-input      { background: #FFFFFF; border: 1px solid #E8E8E8; color: #1A1A2E; border-radius: 10px; padding: 9px 14px; font-size: 0.875rem; transition: border-color 0.2s ease, box-shadow 0.2s ease; outline: none; }
+.glass-input:focus { border-color: #E84040; box-shadow: 0 0 0 3px rgba(232,64,64,0.1); }
+select.glass-input option { background: white; color: #1A1A2E; }
+.btn-ghost { background: transparent; color: #6B7280; border-radius: 10px; font-weight: 500; font-size: 13px; border: 1px solid #E8E8E8; cursor: pointer; transition: border-color 0.15s ease, color 0.15s ease; }
+.btn-ghost:hover { border-color: #E84040; color: #E84040; }
+.nav-active { background: #E84040 !important; border-radius: 10px; box-shadow: 0 4px 14px rgba(232,64,64,0.28); }
