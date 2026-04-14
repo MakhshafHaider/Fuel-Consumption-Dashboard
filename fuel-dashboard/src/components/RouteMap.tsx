@@ -232,7 +232,7 @@ export default function RouteMap({
   const maxObserved = fuelEvents.reduce((m, e) => Math.max(m, e.fuelBefore, e.fuelAfter), 0);
   const estimatedCapacity = maxObserved > 0 ? maxObserved * 1.1 : 200; // 10% headroom
   const fuelPct = currentFuel
-    ? Math.min(100, (currentFuel.fuel / estimatedCapacity) * 100)
+    ? Math.min(100, (currentFuel.totalFuel / estimatedCapacity) * 100)
     : undefined;
 
   // GPS-tagged events only (for polyline)
@@ -304,7 +304,7 @@ export default function RouteMap({
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                       <span style={{ fontSize: 10, fontWeight: 600, color: "#9CA3AF" }}>Current Fuel Level</span>
                       <span style={{ fontSize: 12, fontWeight: 800, color: fuelColor(fuelPct ?? 0) }}>
-                        {(currentFuel.fuel ?? 0).toFixed(1)} L
+                        {(currentFuel.totalFuel ?? 0).toFixed(1)} L
                       </span>
                     </div>
                     <div style={{ height: 6, background: "#EBEBEB", borderRadius: 3, overflow: "hidden" }}>
@@ -348,7 +348,7 @@ export default function RouteMap({
 
                 {/* Last seen */}
                 <p style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 8 }}>
-                  Last seen: {fmtTime(v.lastSeen)}
+                  Last seen: {v.lastSeen ? fmtTime(v.lastSeen) : "—"}
                 </p>
 
                 {/* Fuel events in popup (only when no GPS on events) */}

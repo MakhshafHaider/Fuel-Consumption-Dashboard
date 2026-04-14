@@ -66,7 +66,7 @@ export default function RecentFuelLogs({ refuelEvents, currentFuel, loading }: P
             </p>
           </div>
           <div className="text-right flex-shrink-0">
-            <p className="text-xl font-bold" style={{ color: "#E84040" }}>{(currentFuel.fuel ?? 0).toFixed(1)}</p>
+            <p className="text-xl font-bold" style={{ color: "#E84040" }}>{(currentFuel.totalFuel ?? 0).toFixed(1)}</p>
             <p className="text-xs font-medium" style={{ color: "#9CA3AF" }}>litres</p>
           </div>
         </div>

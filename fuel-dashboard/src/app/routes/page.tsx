@@ -292,7 +292,7 @@ export default function RoutesPage() {
   // Fuel level estimation for the ring (same calc as in RouteMap)
   const maxObserved = fuelEvents.reduce((m, e) => Math.max(m, e.fuelBefore, e.fuelAfter), 0);
   const estCapacity = maxObserved > 0 ? maxObserved * 1.1 : 200;
-  const fuelPct     = currentFuel ? Math.min(100, (currentFuel.fuel / estCapacity) * 100) : null;
+  const fuelPct     = currentFuel ? Math.min(100, (currentFuel.totalFuel / estCapacity) * 100) : null;
   const fuelColor   = fuelPct === null ? "#9CA3AF" : fuelPct > 60 ? "#22c55e" : fuelPct > 30 ? "#f59e0b" : "#ef4444";
 
   const PRESETS: { key: Preset; label: string }[] = [
@@ -419,7 +419,7 @@ export default function RoutesPage() {
                   </div>
                   <div style={{ flex: 1 }}>
                     <p style={{ fontSize: 9, color: "#9CA3AF" }}>Current fuel level</p>
-                    <p style={{ fontSize: 17, fontWeight: 800, color: "#E84040", lineHeight: 1 }}>{(currentFuel.fuel ?? 0).toFixed(1)} L</p>
+                    <p style={{ fontSize: 17, fontWeight: 800, color: "#E84040", lineHeight: 1 }}>{(currentFuel.totalFuel ?? 0).toFixed(1)} L</p>
                   </div>
                   <span style={{ fontSize: 9, fontWeight: 700, padding: "3px 8px", borderRadius: 20, background: currentFuel.speed > 0 ? "rgba(34,197,94,0.1)" : "#F5F4F4", color: currentFuel.speed > 0 ? "#16a34a" : "#9CA3AF" }}>
                     {currentFuel.speed > 0 ? `${currentFuel.speed} km/h` : "Parked"}
@@ -508,7 +508,7 @@ export default function RoutesPage() {
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
                         <span style={{ fontSize: 9, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.06em" }}>Current Fuel</span>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: fuelColor }}>{(currentFuel.fuel ?? 0).toFixed(1)} L</span>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: fuelColor }}>{(currentFuel.totalFuel ?? 0).toFixed(1)} L</span>
                     </div>
                     <div style={{ height: 7, background: "#F0EFEF", borderRadius: 4, overflow: "hidden" }}>
                       <div style={{ height: "100%", width: `${fuelPct ?? 0}%`, background: fuelColor, borderRadius: 4 }} />
@@ -522,7 +522,7 @@ export default function RoutesPage() {
                   ) : currentFuel ? (
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <Fuel size={12} style={{ color: "#E84040" }} />
-                      <span style={{ fontSize: 12, fontWeight: 800, color: "#E84040" }}>{(currentFuel.fuel ?? 0).toFixed(1)} L</span>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: "#E84040" }}>{(currentFuel.totalFuel ?? 0).toFixed(1)} L</span>
                       <span style={{ fontSize: 9, color: "#9CA3AF" }}>current fuel</span>
                     </div>
                   ) : null}
