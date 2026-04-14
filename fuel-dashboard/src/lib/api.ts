@@ -96,8 +96,12 @@ export async function login(username: string, password: string): Promise<LoginRe
 
 // ─── Vehicles ──────────────────────────────────────────────────────────────
 
-export async function getVehicles(token: string): Promise<VehiclesResponse> {
-  return request<VehiclesResponse>("/vehicles", {}, token);
+export async function getVehicles(
+  token: string,
+  hasFuelSensor = true
+): Promise<VehiclesResponse> {
+  const qs = hasFuelSensor ? "?hasFuelSensor=true" : "";
+  return request<VehiclesResponse>(`/vehicles${qs}`, {}, token);
 }
 
 // ─── Fuel sensors ──────────────────────────────────────────────────────────
