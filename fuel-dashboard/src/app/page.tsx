@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, memo, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, AlertCircle, X } from "lucide-react";
 
@@ -25,9 +25,9 @@ import FuelStatsPanel       from "@/components/FuelStatsPanel";
 import FuelSensorsBar       from "@/components/FuelSensorsBar";
 import RecentFuelLogs       from "@/components/RecentFuelLogs";
 import QuickCalendar        from "@/components/QuickCalendar";
-import MaintenanceReminders from "@/components/MaintenanceReminders";
 import ActiveAlerts         from "@/components/ActiveAlerts";
 import FleetTargets         from "@/components/FleetTargets";
+import TheftAlerts          from "@/components/TheftAlerts";
 import { ShimmerStyle }     from "@/components/LoadingSkeleton";
 
 // ── Inline error banner ──────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ function ErrorBanner({ message, onClose }: { message: string; onClose: () => voi
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-export default function DashboardPage() {
+const DashboardPage = memo(function DashboardPage() {
   const { token, isLoading: authLoading, logout } = useAuth();
   const router = useRouter();
 
@@ -170,28 +170,7 @@ export default function DashboardPage() {
       if (cur.status === "fulfilled") setCurrentFuel(cur.value);
 
       if (hist.status === "fulfilled") {
-        const h = hist.value;
-        // ── Debug: verify backend data granularity ──────────────────
-        console.group(`[FuelIQ] Fuel History — ${selectedImei}`);
-        console.log(`Interval requested : ${HISTORY_INTERVAL}`);
-        console.log(`Interval returned  : ${h.interval}`);
-        console.log(`Total buckets      : ${h.buckets.length}`);
-        console.log(`Period             : ${h.from}  →  ${h.to}`);
-        console.log(`Samples in data    : ${h.samples}`);
-        if (h.buckets.length > 0) {
-          console.log(`First point        :`, h.buckets[0]);
-          console.log(`Last point         :`, h.buckets[h.buckets.length - 1]);
-          const gaps = h.buckets.slice(1).map((b, i) => {
-            const prev = new Date(h.buckets[i].dt).getTime();
-            const curr = new Date(b.dt).getTime();
-            return (curr - prev) / 60_000; // minutes
-          });
-          const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
-          console.log(`Avg gap between points: ${avgGap.toFixed(1)} minutes`);
-          console.log(`Min gap: ${Math.min(...gaps).toFixed(1)} min  |  Max gap: ${Math.max(...gaps).toFixed(1)} min`);
-        }
-        console.groupEnd();
-        setFuelHistory(h);
+        setFuelHistory(hist.value);
       } else if (hist.status === "rejected") {
         const e = hist.reason;
         if (e instanceof ApiError && e.statusCode === 401) handle401();
@@ -236,14 +215,16 @@ export default function DashboardPage() {
     });
   }
 
-  // ── Derived ───────────────────────────────────────────────────────────────
-  const selectedVehicle = vehicles.find(v => v.imei === selectedImei);
-  const primarySensor   = fuelSensors?.sensors[0];
+  // ── Derived (memoized) ────────────────────────────────────────────────────
+  const selectedVehicle = useMemo(() => vehicles.find(v => v.imei === selectedImei), [vehicles, selectedImei]);
+  const primarySensor   = useMemo(() => fuelSensors?.sensors[0], [fuelSensors]);
 
-  const refuelList =
+  const refuelList = useMemo(() =>
     consumption?.refuels?.length ? consumption.refuels.map(r => ({ ...r })) :
     refuelEvents?.refuelEvents   ? refuelEvents.refuelEvents
-    : [];
+    : [],
+    [consumption, refuelEvents]
+  );
 
   // ── Auth loading gate ─────────────────────────────────────────────────────
   if (authLoading || (!token && !authLoading)) {
@@ -337,9 +318,99 @@ export default function DashboardPage() {
               <QuickCalendar />
             </div>
 
-            {/* Reminders */}
-            <div className="mt-4">
-              <MaintenanceReminders />
+            {/* Theft Detection Metrics */}
+            <div className="mt-6">
+              <h3 className="text-sm font-semibold mb-3" style={{ color: "#1A1A2E" }}>Theft Detection Overview</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Risk Score Card */}
+                <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-14 h-14 flex items-center justify-center">
+                      <svg className="w-14 h-14 transform -rotate-90">
+                        <circle
+                          cx="28"
+                          cy="28"
+                          r="24"
+                          stroke="#FEE2E2"
+                          strokeWidth="4"
+                          fill="none"
+                        />
+                        <circle
+                          cx="28"
+                          cy="28"
+                          r="24"
+                          stroke="#EF4444"
+                          strokeWidth="4"
+                          fill="none"
+                          strokeDasharray="150.8"
+                          strokeDashoffset="0"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span className="absolute text-sm font-bold" style={{ color: "#EF4444" }}>100</span>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Risk Score</p>
+                      <p className="text-sm font-bold" style={{ color: "#1A1A2E" }}>High Risk</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium" style={{ background: "#FEE2E2", color: "#EF4444" }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    High Risk
+                  </div>
+                </div>
+
+                {/* Total Drops Card */}
+                <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: "#DBEAFE" }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2v20M12 2l-4 4M12 2l4 4"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Total Drops</p>
+                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>2864</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Suspicious / Theft Card */}
+                <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: "#FEF3C7" }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                        <line x1="12" y1="9" x2="12" y2="13"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Suspicious / Theft</p>
+                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>912 / 178</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fuel Lost Card */}
+                <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: "#FEF9C3" }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EAB308" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-.5 1.7-1 2-2h2v-4h-2c0-1-.5-1.5-1-2h0V5z"/>
+                        <path d="M2 9v1c0 1.1.9 2 2 2h1"/>
+                        <path d="M16 11h0"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Fuel Lost</p>
+                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>16,148.2L</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="h-8" />
@@ -351,6 +422,7 @@ export default function DashboardPage() {
           className="flex-shrink-0 flex flex-col gap-4 py-5 px-4 overflow-y-auto scroll-panel"
           style={{ width: 288, background: "#FFFFFF", borderLeft: "1px solid #EFEFEF" }}
         >
+          <TheftAlerts loading={loadingSummary} />
           <ActiveAlerts vehicles={summary?.vehicles ?? []} loading={loadingSummary} />
           <FleetTargets
             vehicles={summary?.vehicles ?? []}
@@ -362,4 +434,6 @@ export default function DashboardPage() {
       </div>
     </>
   );
-}
+});
+
+export default DashboardPage;

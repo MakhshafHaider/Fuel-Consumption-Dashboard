@@ -5,6 +5,7 @@ import { FuelConsumptionService } from '../fuel/services/fuel-consumption.servic
 import { FuelTransformService } from '../fuel/services/fuel-transform.service';
 import { DynamicTableQueryService } from '../fuel/services/dynamic-table-query.service';
 import { ThriftService } from '../fuel/services/thrift.service';
+import { TheftDetectionService } from '../fuel/services/theft-detection.service';
 export declare class ReportsService {
     private readonly dataSource;
     private readonly config;
@@ -13,8 +14,9 @@ export declare class ReportsService {
     private readonly transform;
     private readonly dynQuery;
     private readonly thriftService;
+    private readonly theftDetectionService;
     private readonly logger;
-    constructor(dataSource: DataSource, config: ConfigService, sensorResolver: FuelSensorResolverService, consumptionService: FuelConsumptionService, transform: FuelTransformService, dynQuery: DynamicTableQueryService, thriftService: ThriftService);
+    constructor(dataSource: DataSource, config: ConfigService, sensorResolver: FuelSensorResolverService, consumptionService: FuelConsumptionService, transform: FuelTransformService, dynQuery: DynamicTableQueryService, thriftService: ThriftService, theftDetectionService: TheftDetectionService);
     parseDateRange(fromStr: string, toStr: string): {
         from: Date;
         to: Date;
@@ -262,5 +264,58 @@ export declare class ReportsService {
             model: string;
             simNumber: string;
         }[];
+    }>;
+    getTheftDetectionReport(userId: number, fromStr: string, toStr: string): Promise<{
+        from: string;
+        to: string;
+        fleetSummary: {
+            totalDrops: number;
+            suspiciousDrops: number;
+            theftDrops: number;
+            totalFuelLost: number;
+            suspiciousFuelLost: number;
+            theftFuelLost: number;
+        };
+        fleetRiskLevel: string;
+        fleetRiskScore: number;
+        vehicles: ({
+            imei: string;
+            name: string;
+            plateNumber: string;
+            unit: string;
+            summary: {
+                totalDrops: number;
+                normalDrops: number;
+                suspiciousDrops: number;
+                theftDrops: number;
+                totalFuelLost: number;
+                suspiciousFuelLost: number;
+                theftFuelLost: number;
+            };
+            riskLevel: "low" | "medium" | "high";
+            riskScore: number;
+            alerts: string[];
+            drops: import("../fuel/services/theft-detection.service").ClassifiedDropEvent[];
+            status: string;
+        } | {
+            imei: string;
+            name: string;
+            plateNumber: string;
+            unit: string;
+            summary: {
+                totalDrops: number;
+                normalDrops: number;
+                suspiciousDrops: number;
+                theftDrops: number;
+                totalFuelLost: number;
+                suspiciousFuelLost: number;
+                theftFuelLost: number;
+            };
+            riskLevel: string;
+            riskScore: number;
+            alerts: never[];
+            drops: never[];
+            status: string;
+        })[];
     }>;
 }

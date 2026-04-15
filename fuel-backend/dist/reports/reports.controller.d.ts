@@ -317,4 +317,66 @@ export declare class ReportsController {
             }[];
         };
     }>;
+    getTheftDetection(req: {
+        user: {
+            id: number;
+        };
+    }, query: ReportRangeDto): Promise<{
+        success: boolean;
+        message: string;
+        report: string;
+        data: {
+            from: string;
+            to: string;
+            fleetSummary: {
+                totalDrops: number;
+                suspiciousDrops: number;
+                theftDrops: number;
+                totalFuelLost: number;
+                suspiciousFuelLost: number;
+                theftFuelLost: number;
+            };
+            fleetRiskLevel: string;
+            fleetRiskScore: number;
+            vehicles: ({
+                imei: string;
+                name: string;
+                plateNumber: string;
+                unit: string;
+                summary: {
+                    totalDrops: number;
+                    normalDrops: number;
+                    suspiciousDrops: number;
+                    theftDrops: number;
+                    totalFuelLost: number;
+                    suspiciousFuelLost: number;
+                    theftFuelLost: number;
+                };
+                riskLevel: "low" | "medium" | "high";
+                riskScore: number;
+                alerts: string[];
+                drops: import("../fuel/services/theft-detection.service").ClassifiedDropEvent[];
+                status: string;
+            } | {
+                imei: string;
+                name: string;
+                plateNumber: string;
+                unit: string;
+                summary: {
+                    totalDrops: number;
+                    normalDrops: number;
+                    suspiciousDrops: number;
+                    theftDrops: number;
+                    totalFuelLost: number;
+                    suspiciousFuelLost: number;
+                    theftFuelLost: number;
+                };
+                riskLevel: string;
+                riskScore: number;
+                alerts: never[];
+                drops: never[];
+                status: string;
+            })[];
+        };
+    }>;
 }

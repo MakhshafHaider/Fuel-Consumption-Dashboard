@@ -16,6 +16,7 @@ import { FuelHistoryService, FuelInterval } from './services/fuel-history.servic
 import { FuelConsumptionService } from './services/fuel-consumption.service';
 import { FuelStatsService } from './services/fuel-stats.service';
 import { ThriftService } from './services/thrift.service';
+import { TheftDetectionService } from './services/theft-detection.service';
 import { FuelHistoryDto } from './dto/fuel-history.dto';
 import { FuelConsumptionDto } from './dto/fuel-consumption.dto';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -34,6 +35,7 @@ export class FuelController {
     private readonly consumptionService: FuelConsumptionService,
     private readonly statsService: FuelStatsService,
     private readonly thriftService: ThriftService,
+    private readonly theftDetectionService: TheftDetectionService,
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
@@ -399,6 +401,33 @@ export class FuelController {
     return {
       success: true,
       message: 'Fuel stats calculated',
+      data: result,
+    };
+  }
+
+  /**
+   * GET /vehicles/:imei/fuel/theft?from=&to=&sensorId=
+   * Theft detection: analyzes fuel drops to detect suspicious patterns and potential theft.
+   * Returns classified drops (normal/suspicious/theft) with risk score and alerts.
+   */
+  @Get('theft')
+  async getTheftDetection(
+    @Param('imei') imei: string,
+    @Query() query: FuelConsumptionDto,
+    @Query('sensorId') sensorIdStr?: string,
+  ) {
+    this.logger.log(
+      `GET /vehicles/${imei}/fuel/theft from=${query.from} to=${query.to} sensorId=${sensorIdStr}`,
+    );
+
+    const { from, to } = this.parseDateRange(query.from, query.to);
+    const sensor = await this.resolveSensor(imei, sensorIdStr);
+
+    const result = await this.theftDetectionService.detectTheft(imei, from, to, sensor);
+
+    return {
+      success: true,
+      message: 'Theft detection analysis completed',
       data: result,
     };
   }

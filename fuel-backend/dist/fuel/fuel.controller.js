@@ -24,6 +24,7 @@ const fuel_history_service_1 = require("./services/fuel-history.service");
 const fuel_consumption_service_1 = require("./services/fuel-consumption.service");
 const fuel_stats_service_1 = require("./services/fuel-stats.service");
 const thrift_service_1 = require("./services/thrift.service");
+const theft_detection_service_1 = require("./services/theft-detection.service");
 const fuel_history_dto_1 = require("./dto/fuel-history.dto");
 const fuel_consumption_dto_1 = require("./dto/fuel-consumption.dto");
 const typeorm_1 = require("@nestjs/typeorm");
@@ -36,9 +37,10 @@ let FuelController = FuelController_1 = class FuelController {
     consumptionService;
     statsService;
     thriftService;
+    theftDetectionService;
     dataSource;
     logger = new common_1.Logger(FuelController_1.name);
-    constructor(sensorResolver, transform, dynQuery, historyService, consumptionService, statsService, thriftService, dataSource) {
+    constructor(sensorResolver, transform, dynQuery, historyService, consumptionService, statsService, thriftService, theftDetectionService, dataSource) {
         this.sensorResolver = sensorResolver;
         this.transform = transform;
         this.dynQuery = dynQuery;
@@ -46,6 +48,7 @@ let FuelController = FuelController_1 = class FuelController {
         this.consumptionService = consumptionService;
         this.statsService = statsService;
         this.thriftService = thriftService;
+        this.theftDetectionService = theftDetectionService;
         this.dataSource = dataSource;
     }
     async listSensors(imei) {
@@ -263,6 +266,17 @@ let FuelController = FuelController_1 = class FuelController {
             data: result,
         };
     }
+    async getTheftDetection(imei, query, sensorIdStr) {
+        this.logger.log(`GET /vehicles/${imei}/fuel/theft from=${query.from} to=${query.to} sensorId=${sensorIdStr}`);
+        const { from, to } = this.parseDateRange(query.from, query.to);
+        const sensor = await this.resolveSensor(imei, sensorIdStr);
+        const result = await this.theftDetectionService.detectTheft(imei, from, to, sensor);
+        return {
+            success: true,
+            message: 'Theft detection analysis completed',
+            data: result,
+        };
+    }
     async resolveSensor(imei, sensorIdStr) {
         if (sensorIdStr) {
             const sensorId = parseInt(sensorIdStr, 10);
@@ -384,10 +398,19 @@ __decorate([
     __metadata("design:paramtypes", [String, fuel_consumption_dto_1.FuelConsumptionDto, String]),
     __metadata("design:returntype", Promise)
 ], FuelController.prototype, "getFuelStats", null);
+__decorate([
+    (0, common_1.Get)('theft'),
+    __param(0, (0, common_1.Param)('imei')),
+    __param(1, (0, common_1.Query)()),
+    __param(2, (0, common_1.Query)('sensorId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, fuel_consumption_dto_1.FuelConsumptionDto, String]),
+    __metadata("design:returntype", Promise)
+], FuelController.prototype, "getTheftDetection", null);
 exports.FuelController = FuelController = FuelController_1 = __decorate([
     (0, common_1.Controller)('vehicles/:imei/fuel'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), imei_ownership_guard_1.ImeiOwnershipGuard),
-    __param(7, (0, typeorm_1.InjectDataSource)()),
+    __param(8, (0, typeorm_1.InjectDataSource)()),
     __metadata("design:paramtypes", [fuel_sensor_resolver_service_1.FuelSensorResolverService,
         fuel_transform_service_1.FuelTransformService,
         dynamic_table_query_service_1.DynamicTableQueryService,
@@ -395,6 +418,7 @@ exports.FuelController = FuelController = FuelController_1 = __decorate([
         fuel_consumption_service_1.FuelConsumptionService,
         fuel_stats_service_1.FuelStatsService,
         thrift_service_1.ThriftService,
+        theft_detection_service_1.TheftDetectionService,
         typeorm_2.DataSource])
 ], FuelController);
 //# sourceMappingURL=fuel.controller.js.map

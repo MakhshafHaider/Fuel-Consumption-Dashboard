@@ -14,7 +14,7 @@ export interface Vehicle {
   speed: number;
   lat: number;
   lng: number;
-  lastSeen: string | null;
+  lastSeen: string;
   status: "online" | "offline";
   device: string;
   model: string;
@@ -46,19 +46,11 @@ export interface FuelSensorsData {
 
 // ─── Fuel current ──────────────────────────────────────────────────────────
 
-export interface FuelCurrentTank {
-  sensorId: number;
-  sensorName: string;
+export interface FuelCurrentData {
+  imei: string;
   fuel: number;
   unit: string;
   method: string;
-}
-
-export interface FuelCurrentData {
-  imei: string;
-  totalFuel: number;
-  unit: string;
-  tanks: FuelCurrentTank[];
   lastSeen: string;
   speed: number;
   lat: number;
@@ -82,12 +74,10 @@ export interface FuelHistoryData {
   interval: Interval;
   unit: string;
   samples: number;
-  sensorId?: number;
-  sensorName?: string;
   buckets: FuelBucket[];
 }
 
-// ─── Shared fuel detail ────────────────────────────────────────────────────
+// ─── Shared drop / refuel detail ───────────────────────────────────────────
 
 export interface FuelDropDetail {
   at: string;
@@ -105,7 +95,7 @@ export interface FuelRefuelDetail {
   unit: string;
 }
 
-// ─── Fuel consumption ──────────────────────────────────────────────────────
+// ─── Fuel consumption (updated: now includes drops[] + refuels[] + tanks[]) ─
 
 export interface TankBreakdown {
   sensorId: number;
@@ -121,16 +111,19 @@ export interface FuelConsumptionData {
   to: string;
   consumed: number;
   refueled: number;
-  estimatedCost: number | null;
+  estimatedCost: number;
   unit: string;
   refuelEvents: number;
   samples: number;
+  /** Single-tank: all drop events */
   drops?: FuelDropDetail[];
+  /** Single-tank: all refuel events */
   refuels?: FuelRefuelDetail[];
+  /** Multi-tank: per-tank breakdown */
   tanks?: TankBreakdown[];
 }
 
-// ─── Fuel stats ────────────────────────────────────────────────────────────
+// ─── Fuel stats (NEW) ──────────────────────────────────────────────────────
 
 export interface FuelEfficiency {
   totalDistanceKm: number;
@@ -152,10 +145,10 @@ export interface FuelTimelineEvent {
 }
 
 export interface FuelTimeline {
-  biggestDrop: FuelTimelineEvent;
+  biggestDrop:   FuelTimelineEvent;
   biggestRefuel: FuelTimelineEvent;
-  lowestLevel: FuelTimelineEvent;
-  highestLevel: FuelTimelineEvent;
+  lowestLevel:   FuelTimelineEvent;
+  highestLevel:  FuelTimelineEvent;
 }
 
 export interface FuelStatsData {
@@ -165,7 +158,7 @@ export interface FuelStatsData {
   unit: string;
   consumed: number;
   refueled: number;
-  estimatedCost: number | null;
+  estimatedCost: number;
   avgDailyConsumption: number;
   efficiency: FuelEfficiency;
   idleDrain: FuelIdleDrain;
@@ -177,52 +170,9 @@ export interface FuelStatsData {
   refuels: FuelRefuelDetail[];
 }
 
-// ─── Fuel thrift ───────────────────────────────────────────────────────────
-
-export type ThriftRating = "excellent" | "good" | "average" | "poor";
-
-export interface HighSpeedDrain {
-  liters: number;
-  percentage: number;
-  events: number;
-}
-
-export interface DailyTrendItem {
-  date: string;
-  consumed: number;
-  distanceKm: number;
-  kmPerLiter: number;
-  rating: ThriftRating;
-}
-
-export interface ThriftScoreBreakdown {
-  idlePenalty: number;
-  overspeedPenalty: number;
-  efficiencyPenalty: number;
-}
-
-export interface ThriftScore {
-  score: number;
-  rating: ThriftRating;
-  breakdown: ThriftScoreBreakdown;
-}
-
-export interface FuelThriftData {
-  imei: string;
-  consumed: number;
-  efficiency: FuelEfficiency;
-  idleDrain: FuelIdleDrain;
-  highSpeedDrain: HighSpeedDrain;
-  dailyTrend: DailyTrendItem[];
-  thriftScore: ThriftScore;
-  samples: number;
-}
-
-// ─── Refuel events ─────────────────────────────────────────────────────────
+// ─── Refuel events (existing endpoint) ─────────────────────────────────────
 
 export interface RefuelEvent {
-  sensorId?: number;
-  sensorName?: string;
   at: string;
   fuelBefore: number;
   fuelAfter: number;
@@ -237,25 +187,6 @@ export interface RefuelEventsData {
   refuelEvents: RefuelEvent[];
 }
 
-// ─── Fuel debug ────────────────────────────────────────────────────────────
-
-export interface FuelDebugSample {
-  at: string;
-  rawValue: number | string | null;
-  transformedValue: number | null;
-  method?: string;
-  sensorId?: number;
-  sensorName?: string;
-  unit?: string;
-}
-
-export interface FuelDebugData {
-  imei: string;
-  from: string;
-  to: string;
-  samples: FuelDebugSample[];
-}
-
 // ─── Dashboard summary ─────────────────────────────────────────────────────
 
 export interface VehicleSummary {
@@ -264,10 +195,10 @@ export interface VehicleSummary {
   plateNumber: string;
   consumed: number;
   refueled: number;
-  cost: number | null;
+  cost: number;
   lastSeen: string;
   status: "online" | "offline";
-  currentFuel: number | null;
+  currentFuel: number;
   unit: string;
 }
 
@@ -277,11 +208,60 @@ export interface DashboardSummaryData {
   vehicles: VehicleSummary[];
   totals: {
     consumed: number;
-    cost: number | null;
+    cost: number;
   };
 }
 
-// ─── Fleet ranking ─────────────────────────────────────────────────────────
+// ─── Daily Trend (used in thrift + daily-trend reports) ────────────────────
+
+export interface DailyTrendItem {
+  date: string;
+  consumed: number;
+  distanceKm: number;
+  kmPerLiter: number;
+  rating: string;
+}
+
+// ─── Fleet Daily Trend ─────────────────────────────────────────────────────
+
+export interface FleetDailyTrendItem {
+  date: string;
+  consumed: number;
+  distanceKm: number;
+}
+
+// ─── Thrift Score Breakdown ──────────────────────────────────────────────────
+
+export interface ThriftScoreBreakdown {
+  idlePenalty: number;
+  overspeedPenalty: number;
+  efficiencyPenalty: number;
+}
+
+export interface ThriftScoreData {
+  score: number;
+  rating: string;
+  breakdown: ThriftScoreBreakdown;
+}
+
+// ─── Thrift Analysis (Per Vehicle) ───────────────────────────────────────────
+
+export interface ThriftAnalysisData {
+  imei: string;
+  consumed: number;
+  efficiency: FuelEfficiency;
+  idleDrain: FuelIdleDrain;
+  highSpeedDrain: {
+    liters: number;
+    percentage: number;
+    events: number;
+  };
+  dailyTrend: DailyTrendItem[];
+  thriftScore: ThriftScoreData;
+  samples: number;
+}
+
+// ─── Fleet Ranking (Thrift Leaderboard) ──────────────────────────────────────
 
 export interface FleetRankingItem {
   rank: number;
@@ -293,28 +273,48 @@ export interface FleetRankingItem {
   consumed: number;
   totalDistanceKm: number;
   thriftScore: number;
-  thriftRating: ThriftRating;
-  badge?: "best" | "worst";
-}
-
-export interface FleetRankingHighlight {
-  rank: number;
-  name: string;
-  thriftScore: number;
-  badge: "best" | "worst";
+  thriftRating: string;
+  badge: string;
 }
 
 export interface FleetRankingData {
   from: string;
   to: string;
   ranking: FleetRankingItem[];
-  bestVehicle: FleetRankingHighlight;
-  worstVehicle: FleetRankingHighlight;
+  bestVehicle?: {
+    rank: number;
+    name: string;
+    thriftScore: number;
+    badge: string;
+  };
+  worstVehicle?: {
+    rank: number;
+    name: string;
+    thriftScore: number;
+    badge: string;
+  };
 }
 
-// ─── Reports ───────────────────────────────────────────────────────────────
+// ─── Fuel Debug ──────────────────────────────────────────────────────────────
 
-export type ReportVehicleStatus = "ok" | "no_data";
+export interface FuelDebugSample {
+  rawValue: number;
+  formulaApplied?: number;
+  calibrationApplied?: number;
+  finalValue: number;
+  timestamp: string;
+}
+
+export interface FuelDebugData {
+  imei: string;
+  from: string;
+  to: string;
+  sensorId: number;
+  samples: FuelDebugSample[];
+  totalSamples: number;
+}
+
+// ─── Reports: Consumption ────────────────────────────────────────────────────
 
 export interface ConsumptionReportVehicle {
   imei: string;
@@ -325,7 +325,7 @@ export interface ConsumptionReportVehicle {
   estimatedCost: number | null;
   refuelEvents: number;
   unit: string;
-  status: ReportVehicleStatus;
+  status: "ok" | "no_data";
 }
 
 export interface ConsumptionReportData {
@@ -339,7 +339,9 @@ export interface ConsumptionReportData {
   vehicles: ConsumptionReportVehicle[];
 }
 
-export interface RefuelsReportEvent {
+// ─── Reports: Refuels ────────────────────────────────────────────────────────
+
+export interface RefuelReportEvent {
   imei: string;
   name: string;
   plateNumber: string;
@@ -350,13 +352,15 @@ export interface RefuelsReportEvent {
   unit: string;
 }
 
-export interface RefuelsReportData {
+export interface RefuelReportData {
   from: string;
   to: string;
   totalEvents: number;
   totalAdded: number;
-  events: RefuelsReportEvent[];
+  events: RefuelReportEvent[];
 }
+
+// ─── Reports: Idle Waste ─────────────────────────────────────────────────────
 
 export interface IdleWasteVehicle {
   imei: string;
@@ -366,7 +370,7 @@ export interface IdleWasteVehicle {
   idleLiters: number;
   idlePercentage: number;
   unit: string;
-  status: ReportVehicleStatus;
+  status: "ok" | "no_data";
 }
 
 export interface IdleWasteReportData {
@@ -380,6 +384,8 @@ export interface IdleWasteReportData {
   vehicles: IdleWasteVehicle[];
 }
 
+// ─── Reports: High Speed Waste ───────────────────────────────────────────────
+
 export interface HighSpeedWasteVehicle {
   imei: string;
   name: string;
@@ -389,7 +395,7 @@ export interface HighSpeedWasteVehicle {
   highSpeedPercentage: number;
   highSpeedEvents: number;
   unit: string;
-  status: ReportVehicleStatus;
+  status: "ok" | "no_data";
 }
 
 export interface HighSpeedWasteReportData {
@@ -404,11 +410,7 @@ export interface HighSpeedWasteReportData {
   vehicles: HighSpeedWasteVehicle[];
 }
 
-export interface FleetDailyTrendItem {
-  date: string;
-  consumed: number;
-  distanceKm: number;
-}
+// ─── Reports: Daily Trend ────────────────────────────────────────────────────
 
 export interface DailyTrendVehicle {
   imei: string;
@@ -416,7 +418,7 @@ export interface DailyTrendVehicle {
   plateNumber: string;
   unit: string;
   totalConsumed: number;
-  status: ReportVehicleStatus;
+  status: "ok" | "no_data";
   dailyTrend: DailyTrendItem[];
 }
 
@@ -427,12 +429,7 @@ export interface DailyTrendReportData {
   vehicles: DailyTrendVehicle[];
 }
 
-export interface ThriftReportBestWorst {
-  imei: string;
-  name: string;
-  thriftScore: number;
-  thriftRating: ThriftRating;
-}
+// ─── Reports: Thrift ─────────────────────────────────────────────────────────
 
 export interface ThriftReportVehicle {
   imei: string;
@@ -448,19 +445,31 @@ export interface ThriftReportVehicle {
   highSpeedLiters: number;
   highSpeedPercentage: number;
   thriftScore: number;
-  thriftRating: ThriftRating;
+  thriftRating: string;
   breakdown: ThriftScoreBreakdown;
-  status: ReportVehicleStatus;
+  status: "ok" | "no_data";
 }
 
 export interface ThriftReportData {
   from: string;
   to: string;
   fleetAvgScore: number;
-  bestVehicle: ThriftReportBestWorst;
-  worstVehicle: ThriftReportBestWorst;
+  bestVehicle?: {
+    imei: string;
+    name: string;
+    thriftScore: number;
+    thriftRating: string;
+  } | null;
+  worstVehicle?: {
+    imei: string;
+    name: string;
+    thriftScore: number;
+    thriftRating: string;
+  } | null;
   vehicles: ThriftReportVehicle[];
 }
+
+// ─── Reports: Engine Hours ───────────────────────────────────────────────────
 
 export interface EngineHoursVehicle {
   imei: string;
@@ -469,7 +478,7 @@ export interface EngineHoursVehicle {
   engineOnHours: number;
   avgHoursPerDay: number;
   totalSamples: number;
-  status: ReportVehicleStatus;
+  status: "ok" | "no_data";
 }
 
 export interface EngineHoursReportData {
@@ -479,7 +488,9 @@ export interface EngineHoursReportData {
   vehicles: EngineHoursVehicle[];
 }
 
-export interface VehicleStatusReportVehicle {
+// ─── Reports: Vehicle Status ─────────────────────────────────────────────────
+
+export interface VehicleStatusItem {
   imei: string;
   name: string;
   plateNumber: string;
@@ -501,7 +512,70 @@ export interface VehicleStatusReportData {
   totalVehicles: number;
   online: number;
   offline: number;
-  vehicles: VehicleStatusReportVehicle[];
+  vehicles: VehicleStatusItem[];
+}
+
+// ─── Fuel Theft Detection ──────────────────────────────────────────────────
+
+export interface FuelDrop {
+  at: string;
+  fuelBefore: number;
+  fuelAfter: number;
+  consumed: number;
+  type: "normal" | "suspicious" | "theft";
+  speedAtDrop: number;
+  ignitionOn: boolean;
+  durationMinutes: number;
+  lat: number;
+  lng: number;
+  severity: "low" | "medium" | "high" | "critical";
+  reason: string;
+}
+
+export interface TheftSummary {
+  totalDrops: number;
+  normalDrops: number;
+  suspiciousDrops: number;
+  theftDrops: number;
+  totalFuelLost: number;
+  suspiciousFuelLost: number;
+  theftFuelLost: number;
+}
+
+export interface TheftReportData {
+  imei: string;
+  name: string;
+  plateNumber: string;
+  from: string;
+  to: string;
+  summary: TheftSummary;
+  riskLevel: "low" | "medium" | "high" | "critical";
+  riskScore: number;
+  alerts: string[];
+  drops: FuelDrop[];
+}
+
+export interface FleetTheftVehicle {
+  imei: string;
+  name: string;
+  plateNumber: string;
+  riskScore: number;
+  riskLevel: string;
+  totalDrops: number;
+  suspiciousDrops: number;
+  theftDrops: number;
+  fuelLost: number;
+  alerts: string[];
+}
+
+export interface FleetTheftReportData {
+  from: string;
+  to: string;
+  fleetSummary: TheftSummary;
+  fleetRiskLevel: "low" | "medium" | "high" | "critical";
+  fleetRiskScore: number;
+  fleetAlerts: string[];
+  vehicles: FleetTheftVehicle[];
 }
 
 // ─── Generic API wrapper ───────────────────────────────────────────────────
@@ -526,18 +600,12 @@ export class ApiError extends Error {
 
   get userMessage(): string {
     switch (this.statusCode) {
-      case 400:
-        return this.message;
-      case 401:
-        return "Invalid credentials.";
-      case 403:
-        return "You don't have permission to access this vehicle.";
-      case 404:
-        return "No data found for the selected period.";
-      case 422:
-        return "No fuel sensor configured for this vehicle.";
-      default:
-        return "Something went wrong. Please try again.";
+      case 400: return this.message;
+      case 401: return "Session expired. Please log in again.";
+      case 403: return "You don't have permission to access this vehicle.";
+      case 404: return "No data found for the selected period.";
+      case 422: return "No fuel sensor configured for this vehicle.";
+      default:  return "Something went wrong. Please try again.";
     }
   }
 }

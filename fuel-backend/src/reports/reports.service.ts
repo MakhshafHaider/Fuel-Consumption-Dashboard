@@ -7,6 +7,7 @@ import { FuelConsumptionService } from '../fuel/services/fuel-consumption.servic
 import { FuelTransformService } from '../fuel/services/fuel-transform.service';
 import { DynamicTableQueryService } from '../fuel/services/dynamic-table-query.service';
 import { ThriftService } from '../fuel/services/thrift.service';
+import { TheftDetectionService } from '../fuel/services/theft-detection.service';
 
 const NOISE_THRESHOLD = 0.5;
 
@@ -22,6 +23,7 @@ export class ReportsService {
     private readonly transform: FuelTransformService,
     private readonly dynQuery: DynamicTableQueryService,
     private readonly thriftService: ThriftService,
+    private readonly theftDetectionService: TheftDetectionService,
   ) {}
 
   // ─── Shared helpers ───────────────────────────────────────────────────────
@@ -660,6 +662,91 @@ export class ReportsService {
       online: onlineCount,
       offline: offlineCount,
       vehicles,
+    };
+  }
+
+  // ─── 9. Theft Detection Report ────────────────────────────────────────────
+
+  async getTheftDetectionReport(userId: number, fromStr: string, toStr: string) {
+    const { from, to } = this.parseDateRange(fromStr, toStr);
+    const vehicles = await this.getUserVehicles(userId);
+
+    let fleetTotalDrops = 0;
+    let fleetSuspiciousDrops = 0;
+    let fleetTheftDrops = 0;
+    let fleetTotalFuelLost = 0;
+    let fleetSuspiciousFuelLost = 0;
+    let fleetTheftFuelLost = 0;
+
+    const results = await Promise.all(
+      vehicles.map(async (v) => {
+        try {
+          const sensor = await this.sensorResolver.resolveFuelSensor(v.imei);
+          const detection = await this.theftDetectionService.detectTheft(v.imei, from, to, sensor);
+
+          fleetTotalDrops += detection.summary.totalDrops;
+          fleetSuspiciousDrops += detection.summary.suspiciousDrops;
+          fleetTheftDrops += detection.summary.theftDrops;
+          fleetTotalFuelLost += detection.summary.totalFuelLost;
+          fleetSuspiciousFuelLost += detection.summary.suspiciousFuelLost;
+          fleetTheftFuelLost += detection.summary.theftFuelLost;
+
+          return {
+            imei: v.imei,
+            name: v.name,
+            plateNumber: v.plate_number,
+            unit: detection.unit,
+            summary: detection.summary,
+            riskLevel: detection.riskLevel,
+            riskScore: detection.riskScore,
+            alerts: detection.alerts,
+            drops: detection.drops,
+            status: 'ok',
+          };
+        } catch (err) {
+          this.logger.warn(`Theft detection skip IMEI ${v.imei}: ${String(err)}`);
+          return {
+            imei: v.imei,
+            name: v.name,
+            plateNumber: v.plate_number,
+            unit: 'L',
+            summary: {
+              totalDrops: 0,
+              normalDrops: 0,
+              suspiciousDrops: 0,
+              theftDrops: 0,
+              totalFuelLost: 0,
+              suspiciousFuelLost: 0,
+              theftFuelLost: 0,
+            },
+            riskLevel: 'low',
+            riskScore: 0,
+            alerts: [],
+            drops: [],
+            status: 'no_data',
+          };
+        }
+      }),
+    );
+
+    // Calculate fleet risk level based on total theft events
+    const fleetRiskLevel = fleetTheftDrops > 0 ? 'high' : fleetSuspiciousDrops > 5 ? 'medium' : 'low';
+    const fleetRiskScore = Math.min(100, (fleetTheftDrops * 25) + (fleetSuspiciousDrops * 10));
+
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      fleetSummary: {
+        totalDrops: fleetTotalDrops,
+        suspiciousDrops: fleetSuspiciousDrops,
+        theftDrops: fleetTheftDrops,
+        totalFuelLost: Math.round(fleetTotalFuelLost * 100) / 100,
+        suspiciousFuelLost: Math.round(fleetSuspiciousFuelLost * 100) / 100,
+        theftFuelLost: Math.round(fleetTheftFuelLost * 100) / 100,
+      },
+      fleetRiskLevel,
+      fleetRiskScore: Math.round(fleetRiskScore),
+      vehicles: results.sort((a, b) => b.riskScore - a.riskScore),
     };
   }
 }

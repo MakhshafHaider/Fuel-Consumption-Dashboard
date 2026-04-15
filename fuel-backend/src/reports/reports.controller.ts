@@ -210,4 +210,29 @@ export class ReportsController {
       data,
     };
   }
+
+  /**
+   * GET /reports/theft?from=&to=
+   * Fleet-wide theft detection: analyzes fuel drops for suspicious patterns.
+   * Returns per-vehicle theft risk scores, alerts, and classified drops.
+   */
+  @Get('theft')
+  async getTheftDetection(
+    @Request() req: { user: { id: number } },
+    @Query() query: ReportRangeDto,
+  ) {
+    this.requireRange(query);
+    this.logger.log(
+      `GET /reports/theft user=${req.user.id} from=${query.from} to=${query.to}`,
+    );
+    const data = await this.reportsService.getTheftDetectionReport(
+      req.user.id, query.from, query.to,
+    );
+    return {
+      success: true,
+      message: 'Theft detection report generated',
+      report: 'theft',
+      data,
+    };
+  }
 }

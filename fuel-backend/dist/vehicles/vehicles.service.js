@@ -32,14 +32,23 @@ let VehiclesService = VehiclesService_1 = class VehiclesService {
         const d = new Date(raw);
         return isNaN(d.getTime()) ? null : d;
     }
-    async getVehiclesForUser(userId) {
-        this.logger.log(`Fetching vehicles for user ${userId}`);
-        const rows = await this.dataSource.query(`SELECT o.imei, o.name, o.plate_number, o.speed, o.lat, o.lng,
+    async getVehiclesForUser(userId, hasFuelSensor = false) {
+        this.logger.log(`Fetching vehicles for user ${userId}, hasFuelSensor=${hasFuelSensor}`);
+        let query = `SELECT o.imei, o.name, o.plate_number, o.speed, o.lat, o.lng,
               o.dt_tracker, o.device, o.model, o.sim_number
        FROM gs_user_objects uo
-       INNER JOIN gs_objects o ON o.imei = uo.imei
-       WHERE uo.user_id = ?
-       ORDER BY o.name ASC`, [userId]);
+       INNER JOIN gs_objects o ON o.imei = uo.imei`;
+        const params = [userId];
+        if (hasFuelSensor) {
+            query += ` INNER JOIN gs_object_sensors s ON s.imei = o.imei
+                 AND (s.type = 'fuel' OR s.name LIKE '%fuel%' OR s.name LIKE '%Fuel%')`;
+        }
+        query += ` WHERE uo.user_id = ?`;
+        if (hasFuelSensor) {
+            query += ` GROUP BY o.imei`;
+        }
+        query += ` ORDER BY o.name ASC`;
+        const rows = await this.dataSource.query(query, params);
         const staleMinutes = this.config.get('STALE_THRESHOLD_MINUTES', 30);
         const now = Date.now();
         return rows.map((r) => {

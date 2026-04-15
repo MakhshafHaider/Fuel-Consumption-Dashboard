@@ -23,9 +23,9 @@ let VehiclesController = VehiclesController_1 = class VehiclesController {
     constructor(vehiclesService) {
         this.vehiclesService = vehiclesService;
     }
-    async getVehicles(req) {
-        this.logger.log(`GET /vehicles for user ${req.user.id}`);
-        const vehicles = await this.vehiclesService.getVehiclesForUser(req.user.id);
+    async getVehicles(req, hasFuelSensor) {
+        this.logger.log(`GET /vehicles for user ${req.user.id}, hasFuelSensor=${hasFuelSensor}`);
+        const vehicles = await this.vehiclesService.getVehiclesForUser(req.user.id, hasFuelSensor === 'true');
         return {
             success: true,
             message: 'Vehicles fetched successfully',
@@ -37,8 +37,9 @@ exports.VehiclesController = VehiclesController;
 __decorate([
     (0, common_1.Get)(),
     __param(0, (0, common_1.Request)()),
+    __param(1, (0, common_1.Query)('hasFuelSensor')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], VehiclesController.prototype, "getVehicles", null);
 exports.VehiclesController = VehiclesController = VehiclesController_1 = __decorate([

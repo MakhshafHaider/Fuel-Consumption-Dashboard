@@ -19,6 +19,6 @@ export declare class VehiclesService {
     private readonly logger;
     constructor(dataSource: DataSource, config: ConfigService);
     private safeDate;
-    getVehiclesForUser(userId: number): Promise<VehicleRow[]>;
+    getVehiclesForUser(userId: number, hasFuelSensor?: boolean): Promise<VehicleRow[]>;
     getUserOwnedImeis(userId: number): Promise<string[]>;
 }

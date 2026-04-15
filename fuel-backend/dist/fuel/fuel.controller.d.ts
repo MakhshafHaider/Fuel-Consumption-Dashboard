@@ -5,6 +5,7 @@ import { FuelHistoryService, FuelInterval } from './services/fuel-history.servic
 import { FuelConsumptionService } from './services/fuel-consumption.service';
 import { FuelStatsService } from './services/fuel-stats.service';
 import { ThriftService } from './services/thrift.service';
+import { TheftDetectionService } from './services/theft-detection.service';
 import { FuelHistoryDto } from './dto/fuel-history.dto';
 import { FuelConsumptionDto } from './dto/fuel-consumption.dto';
 import { DataSource } from 'typeorm';
@@ -16,9 +17,10 @@ export declare class FuelController {
     private readonly consumptionService;
     private readonly statsService;
     private readonly thriftService;
+    private readonly theftDetectionService;
     private readonly dataSource;
     private readonly logger;
-    constructor(sensorResolver: FuelSensorResolverService, transform: FuelTransformService, dynQuery: DynamicTableQueryService, historyService: FuelHistoryService, consumptionService: FuelConsumptionService, statsService: FuelStatsService, thriftService: ThriftService, dataSource: DataSource);
+    constructor(sensorResolver: FuelSensorResolverService, transform: FuelTransformService, dynQuery: DynamicTableQueryService, historyService: FuelHistoryService, consumptionService: FuelConsumptionService, statsService: FuelStatsService, thriftService: ThriftService, theftDetectionService: TheftDetectionService, dataSource: DataSource);
     listSensors(imei: string): Promise<{
         success: boolean;
         message: string;
@@ -171,6 +173,11 @@ export declare class FuelController {
         success: boolean;
         message: string;
         data: import("./services/fuel-stats.service").FuelStatsResult;
+    }>;
+    getTheftDetection(imei: string, query: FuelConsumptionDto, sensorIdStr?: string): Promise<{
+        success: boolean;
+        message: string;
+        data: import("./services/theft-detection.service").TheftDetectionResult;
     }>;
     private resolveSensor;
     private readSensorValue;

@@ -7,6 +7,7 @@ import { FuelHistoryService } from './services/fuel-history.service';
 import { FuelConsumptionService } from './services/fuel-consumption.service';
 import { FuelStatsService } from './services/fuel-stats.service';
 import { ThriftService } from './services/thrift.service';
+import { TheftDetectionService } from './services/theft-detection.service';
 
 @Module({
   controllers: [FuelController],
@@ -18,6 +19,7 @@ import { ThriftService } from './services/thrift.service';
     FuelConsumptionService,
     FuelStatsService,
     ThriftService,
+    TheftDetectionService,
   ],
   exports: [
     FuelSensorResolverService,
@@ -27,6 +29,7 @@ import { ThriftService } from './services/thrift.service';
     FuelConsumptionService,
     FuelStatsService,
     ThriftService,
+    TheftDetectionService,
   ],
 })
 export class FuelModule {}

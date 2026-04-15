@@ -23,6 +23,7 @@ const fuel_consumption_service_1 = require("../fuel/services/fuel-consumption.se
 const fuel_transform_service_1 = require("../fuel/services/fuel-transform.service");
 const dynamic_table_query_service_1 = require("../fuel/services/dynamic-table-query.service");
 const thrift_service_1 = require("../fuel/services/thrift.service");
+const theft_detection_service_1 = require("../fuel/services/theft-detection.service");
 const NOISE_THRESHOLD = 0.5;
 let ReportsService = ReportsService_1 = class ReportsService {
     dataSource;
@@ -32,8 +33,9 @@ let ReportsService = ReportsService_1 = class ReportsService {
     transform;
     dynQuery;
     thriftService;
+    theftDetectionService;
     logger = new common_1.Logger(ReportsService_1.name);
-    constructor(dataSource, config, sensorResolver, consumptionService, transform, dynQuery, thriftService) {
+    constructor(dataSource, config, sensorResolver, consumptionService, transform, dynQuery, thriftService, theftDetectionService) {
         this.dataSource = dataSource;
         this.config = config;
         this.sensorResolver = sensorResolver;
@@ -41,6 +43,7 @@ let ReportsService = ReportsService_1 = class ReportsService {
         this.transform = transform;
         this.dynQuery = dynQuery;
         this.thriftService = thriftService;
+        this.theftDetectionService = theftDetectionService;
     }
     parseDateRange(fromStr, toStr) {
         const from = new Date(fromStr);
@@ -548,6 +551,80 @@ let ReportsService = ReportsService_1 = class ReportsService {
             vehicles,
         };
     }
+    async getTheftDetectionReport(userId, fromStr, toStr) {
+        const { from, to } = this.parseDateRange(fromStr, toStr);
+        const vehicles = await this.getUserVehicles(userId);
+        let fleetTotalDrops = 0;
+        let fleetSuspiciousDrops = 0;
+        let fleetTheftDrops = 0;
+        let fleetTotalFuelLost = 0;
+        let fleetSuspiciousFuelLost = 0;
+        let fleetTheftFuelLost = 0;
+        const results = await Promise.all(vehicles.map(async (v) => {
+            try {
+                const sensor = await this.sensorResolver.resolveFuelSensor(v.imei);
+                const detection = await this.theftDetectionService.detectTheft(v.imei, from, to, sensor);
+                fleetTotalDrops += detection.summary.totalDrops;
+                fleetSuspiciousDrops += detection.summary.suspiciousDrops;
+                fleetTheftDrops += detection.summary.theftDrops;
+                fleetTotalFuelLost += detection.summary.totalFuelLost;
+                fleetSuspiciousFuelLost += detection.summary.suspiciousFuelLost;
+                fleetTheftFuelLost += detection.summary.theftFuelLost;
+                return {
+                    imei: v.imei,
+                    name: v.name,
+                    plateNumber: v.plate_number,
+                    unit: detection.unit,
+                    summary: detection.summary,
+                    riskLevel: detection.riskLevel,
+                    riskScore: detection.riskScore,
+                    alerts: detection.alerts,
+                    drops: detection.drops,
+                    status: 'ok',
+                };
+            }
+            catch (err) {
+                this.logger.warn(`Theft detection skip IMEI ${v.imei}: ${String(err)}`);
+                return {
+                    imei: v.imei,
+                    name: v.name,
+                    plateNumber: v.plate_number,
+                    unit: 'L',
+                    summary: {
+                        totalDrops: 0,
+                        normalDrops: 0,
+                        suspiciousDrops: 0,
+                        theftDrops: 0,
+                        totalFuelLost: 0,
+                        suspiciousFuelLost: 0,
+                        theftFuelLost: 0,
+                    },
+                    riskLevel: 'low',
+                    riskScore: 0,
+                    alerts: [],
+                    drops: [],
+                    status: 'no_data',
+                };
+            }
+        }));
+        const fleetRiskLevel = fleetTheftDrops > 0 ? 'high' : fleetSuspiciousDrops > 5 ? 'medium' : 'low';
+        const fleetRiskScore = Math.min(100, (fleetTheftDrops * 25) + (fleetSuspiciousDrops * 10));
+        return {
+            from: from.toISOString(),
+            to: to.toISOString(),
+            fleetSummary: {
+                totalDrops: fleetTotalDrops,
+                suspiciousDrops: fleetSuspiciousDrops,
+                theftDrops: fleetTheftDrops,
+                totalFuelLost: Math.round(fleetTotalFuelLost * 100) / 100,
+                suspiciousFuelLost: Math.round(fleetSuspiciousFuelLost * 100) / 100,
+                theftFuelLost: Math.round(fleetTheftFuelLost * 100) / 100,
+            },
+            fleetRiskLevel,
+            fleetRiskScore: Math.round(fleetRiskScore),
+            vehicles: results.sort((a, b) => b.riskScore - a.riskScore),
+        };
+    }
 };
 exports.ReportsService = ReportsService;
 exports.ReportsService = ReportsService = ReportsService_1 = __decorate([
@@ -559,6 +636,7 @@ exports.ReportsService = ReportsService = ReportsService_1 = __decorate([
         fuel_consumption_service_1.FuelConsumptionService,
         fuel_transform_service_1.FuelTransformService,
         dynamic_table_query_service_1.DynamicTableQueryService,
-        thrift_service_1.ThriftService])
+        thrift_service_1.ThriftService,
+        theft_detection_service_1.TheftDetectionService])
 ], ReportsService);
 //# sourceMappingURL=reports.service.js.map

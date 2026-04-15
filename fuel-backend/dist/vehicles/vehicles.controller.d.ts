@@ -7,7 +7,7 @@ export declare class VehiclesController {
         user: {
             id: number;
         };
-    }): Promise<{
+    }, hasFuelSensor?: string): Promise<{
         success: boolean;
         message: string;
         data: {

@@ -1,23 +1,21 @@
 "use client";
 
+import { memo } from "react";
 import {
-  Fuel, LayoutDashboard, Route, Users,
-  BarChart2, Clock, Bell, LogOut,FileText
+  Fuel, LayoutDashboard, Route, FileText, BarChart3, LogOut,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter, usePathname } from "next/navigation";
 
 const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard",    href: "/",        badge: null  },
-  { icon: Route,           label: "Routes",        href: "/routes",  badge: null  },
-  { icon: FileText,        label: "Reports",       href: null,       badge: null  },
-  { icon: BarChart2,       label: "Analytics",     href: null,       badge: "+10%"},
-  { icon: Clock,           label: "History",       href: null,       badge: null  },
-  { icon: Bell,            label: "Notifications", href: null,       badge: "2"   },
+  { icon: LayoutDashboard, label: "Dashboard", href: "/",        badge: null },
+  { icon: BarChart3,       label: "Analytics", href: "/analytics", badge: "NEW" },
+  { icon: Route,           label: "Routes",    href: "/routes",    badge: null },
+  { icon: FileText,        label: "Reports",   href: "/reports",   badge: null },
 ];
 
-export default function Sidebar() {
-  const { logout, username } = useAuth();
+const Sidebar = memo(function Sidebar() {
+  const { logout } = useAuth();
   const router   = useRouter();
   const pathname = usePathname();
 
@@ -118,4 +116,6 @@ export default function Sidebar() {
       </div>
     </aside>
   );
-}
+});
+
+export default Sidebar;

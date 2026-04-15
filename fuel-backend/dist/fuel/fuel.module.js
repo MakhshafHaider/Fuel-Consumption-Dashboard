@@ -16,6 +16,7 @@ const fuel_history_service_1 = require("./services/fuel-history.service");
 const fuel_consumption_service_1 = require("./services/fuel-consumption.service");
 const fuel_stats_service_1 = require("./services/fuel-stats.service");
 const thrift_service_1 = require("./services/thrift.service");
+const theft_detection_service_1 = require("./services/theft-detection.service");
 let FuelModule = class FuelModule {
 };
 exports.FuelModule = FuelModule;
@@ -30,6 +31,7 @@ exports.FuelModule = FuelModule = __decorate([
             fuel_consumption_service_1.FuelConsumptionService,
             fuel_stats_service_1.FuelStatsService,
             thrift_service_1.ThriftService,
+            theft_detection_service_1.TheftDetectionService,
         ],
         exports: [
             fuel_sensor_resolver_service_1.FuelSensorResolverService,
@@ -39,6 +41,7 @@ exports.FuelModule = FuelModule = __decorate([
             fuel_consumption_service_1.FuelConsumptionService,
             fuel_stats_service_1.FuelStatsService,
             thrift_service_1.ThriftService,
+            theft_detection_service_1.TheftDetectionService,
         ],
     })
 ], FuelModule);
