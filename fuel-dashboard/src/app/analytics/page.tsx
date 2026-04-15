@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Gauge,
   Fuel,
+  PiggyBank,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import Sidebar from "@/components/Sidebar";
@@ -60,7 +61,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AnalyticsTab = "overview" | "predictive" | "cost" | "efficiency" | "anomalies";
+type AnalyticsTab = "overview" | "cost" | "efficiency" ;
 
 interface TabConfig {
   id: AnalyticsTab;
@@ -73,10 +74,8 @@ interface TabConfig {
 
 const TAB_CONFIG: TabConfig[] = [
   { id: "overview", label: "Overview", icon: BarChart3, description: "Fleet performance summary" },
-  { id: "predictive", label: "Predictive", icon: Brain, description: "AI-powered forecasting" },
-  { id: "cost", label: "Cost Analysis", icon: () => <span className="text-lg font-bold">₹</span>, description: "Financial insights & projections" },
+  { id: "cost", label: "Cost Analysis", icon: PiggyBank, description: "Financial insights & projections" },
   { id: "efficiency", label: "Efficiency", icon: Gauge, description: "Benchmarking & scoring" },
-  { id: "anomalies", label: "Anomalies", icon: AlertTriangle, description: "Alerts & irregular patterns" },
 ];
 
 // ─── Utility Functions ────────────────────────────────────────────────────────
@@ -91,7 +90,7 @@ const formatNumber = (num: number, decimals = 1): string => {
 
 const formatCurrency = (num: number): string => {
   if (num === null || num === undefined || isNaN(num)) return "—";
-  return `₹${num.toLocaleString("en-PK", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  return num.toLocaleString("en-PK", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 };
 
 const calculateTrend = (current: number, previous: number): { value: number; isPositive: boolean } => {
@@ -272,7 +271,7 @@ function AnalyticsPage() {
         <KpiSparklineCard
           title="Fuel Cost"
           value={formatCurrency(analyticsData.fuelCost)}
-          icon={() => <span className="text-sm font-bold">PKR</span>}
+          icon={PiggyBank}
           color="#22c55e"
           trend={calculateTrend(analyticsData.fuelCost, analyticsData.fuelCost * 0.98)}
         />
@@ -384,7 +383,7 @@ function AnalyticsPage() {
             title="Cost Projection"
             subtitle="Projected fuel costs based on actual consumption patterns"
             predictionDays={7}
-            metric="PKR"
+            metric="Cost"
             color="#22c55e"
           />
         </div>
@@ -434,7 +433,7 @@ function AnalyticsPage() {
           ) : (
             <div className="bg-white rounded-2xl p-12 border border-gray-100 text-center h-full flex flex-col justify-center">
               <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
-                <span className="text-3xl font-bold text-gray-400">₹</span>
+                <PiggyBank className="w-8 h-8 text-gray-400" />
               </div>
               <h3 className="text-lg font-medium text-gray-900 mb-2">No Cost Data Available</h3>
               <p className="text-sm text-gray-500">Daily cost breakdown will appear once daily trend data is available.</p>
@@ -656,14 +655,12 @@ function AnalyticsPage() {
     switch (activeTab) {
       case "overview":
         return renderOverview();
-      case "predictive":
-        return renderPredictive();
+  
       case "cost":
         return renderCost();
       case "efficiency":
         return renderEfficiency();
-      case "anomalies":
-        return renderAnomalies();
+
       default:
         return renderOverview();
     }

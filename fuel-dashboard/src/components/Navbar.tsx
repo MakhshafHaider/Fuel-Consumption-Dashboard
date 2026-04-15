@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Fuel, Search, ChevronDown } from "lucide-react";
+import { Bell, Search, ChevronDown } from "lucide-react";
 import { useState } from "react";
 
 export default function Navbar() {
@@ -10,16 +10,12 @@ export default function Navbar() {
     <nav className="glass-nav sticky top-0 z-50 px-6 py-3">
       <div className="max-w-screen-2xl mx-auto flex items-center justify-between">
         {/* Logo */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl icon-gradient-blue flex items-center justify-center shadow-lg">
-            <Fuel size={18} className="text-white" />
-          </div>
-          <div>
-            <span className="text-lg font-bold bg-gradient-to-r from-sky-600 to-cyan-500 bg-clip-text text-transparent tracking-tight">
-              FuelIQ
-            </span>
-            <span className="text-xs text-slate-400 block leading-none -mt-0.5">Enterprise Analytics</span>
-          </div>
+        <div className="flex items-center">
+          <img
+            src="/IFS%20Logo.svg"
+            alt="IFS Logo"
+            style={{ height: 60, width: 'auto' }}
+          />
         </div>
 
         {/* Center title */}

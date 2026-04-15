@@ -23,7 +23,7 @@ function CostProjectionCardComponent({
   const isIncreasing = difference > 0;
 
   const formatCurrency = (value: number) => {
-    return `₹${value.toLocaleString("en-PK", { maximumFractionDigits: 0 })}`;
+    return value.toLocaleString("en-PK", { maximumFractionDigits: 0 });
   };
 
   return (
@@ -31,7 +31,7 @@ function CostProjectionCardComponent({
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center">
-          <span className="text-xl font-bold text-green-600">₹</span>
+          <PiggyBank className="w-5 h-5 text-green-600" />
         </div>
         <div>
           <h3 className="text-lg font-semibold text-gray-900">Cost Projection</h3>

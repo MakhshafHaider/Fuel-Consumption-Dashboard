@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import {
-  Fuel, LayoutDashboard, Route, FileText, BarChart3, LogOut,
+  LayoutDashboard, Route, FileText, BarChart3, LogOut,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter, usePathname } from "next/navigation";
@@ -30,17 +30,12 @@ const Sidebar = memo(function Sidebar() {
       style={{ background: "#FFFFFF", borderRight: "1px solid #EFEFEF", width: 220, flexShrink: 0 }}
     >
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-3 mb-6">
-        <div
-          className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm"
-          style={{ background: "#E84040" }}
-        >
-          <Fuel size={16} className="text-white" />
-        </div>
-        <div>
-          <span className="text-sm font-bold" style={{ color: "#1A1A2E" }}>FuelIQ</span>
-          <p className="text-xs" style={{ color: "#9CA3AF", lineHeight: 1, marginTop: 2 }}>Enterprise</p>
-        </div>
+      <div className="flex items-center justify-center mb-6">
+        <img
+          src="/IFS%20Logo.svg"
+          alt="IFS Logo"
+          style={{ width: '100%', height: 'auto', maxHeight: 80 }}
+        />
       </div>
 
       {/* Nav */}

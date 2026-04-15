@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Fuel, Eye, EyeOff, AlertCircle, Loader2, ArrowRight } from "lucide-react";
+import { Eye, EyeOff, AlertCircle, Loader2, ArrowRight } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError } from "@/lib/types";
 
@@ -59,14 +59,12 @@ export default function LoginPage() {
         style={{ width: 360, flexShrink: 0, background: "#E84040", padding: "40px 36px" }}
       >
         {/* Logo */}
-        <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)" }}
-          >
-            <Fuel size={20} className="text-white" />
-          </div>
-          <span className="text-white text-lg font-bold tracking-tight">FuelIQ</span>
+        <div className="flex items-center">
+          <img
+            src="/IFS%20Logo.svg"
+            alt="IFS Logo"
+            style={{ width: '100%', height: 'auto', maxHeight: 100, filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.2))" }}
+          />
         </div>
 
         {/* Bottom text */}
@@ -183,20 +181,12 @@ export default function LoginPage() {
             }} />
 
             {/* Brand row */}
-            <div className="flex items-center gap-3 mb-8">
-              <div
-                className="w-11 h-11 rounded-2xl flex items-center justify-center"
-                style={{
-                  background: "#E84040",
-                  boxShadow: "0 4px 20px rgba(232,64,64,0.55), inset 0 1px 0 rgba(255,255,255,0.3)",
-                }}
-              >
-                <Fuel size={20} className="text-white" />
-              </div>
-              <div>
-                <p className="text-base font-bold leading-none text-white">FuelIQ</p>
-                <p className="text-xs leading-none mt-1" style={{ color: "rgba(255,255,255,0.5)" }}>Enterprise</p>
-              </div>
+            <div className="flex items-center justify-center mb-8">
+              <img
+                src="/IFS%20Logo.svg"
+                alt="IFS Logo"
+                style={{ width: '100%', height: 'auto', maxHeight: 90, filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.3))" }}
+              />
             </div>
 
             {/* Heading */}
