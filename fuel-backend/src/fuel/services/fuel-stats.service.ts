@@ -7,14 +7,20 @@ import {
   FuelReading,
   applyMedianFilter,
   isFakeSpike,
+  isFakeRise,
   isDropConfirmedAfterDelay,
   isPostDropRecovery,
+  isRecoveryRise,
+  isPostRefuelFallback,
   DROP_ALERT_THRESHOLD,
+  RISE_THRESHOLD,
   SPIKE_WINDOW_MINUTES,
   FUEL_MEDIAN_SAMPLES,
+  REFUEL_CONSOLIDATION_MINUTES,
 } from './fuel-drop-filter.util';
 
 const NOISE_THRESHOLD = 0.5;
+/** Used ONLY inside the drop window scan to detect a mid-window refuel and break early. */
 const REFUEL_THRESHOLD = 3.0;
 const MAX_SINGLE_READING_DROP = 2.0;
 
@@ -224,14 +230,56 @@ export class FuelStatsService {
             isConfirmedDrop: false,
           });
         }
-      } else if (delta > REFUEL_THRESHOLD) {
-        refuels.push({
-          at:         row.ts.toISOString(),
-          fuelBefore: Math.round(prev.fuel * 100) / 100,
-          fuelAfter:  Math.round(row.fuel * 100) / 100,
-          added:      Math.round(delta * 100) / 100,
-          unit,
-        });
+      } else if (delta >= RISE_THRESHOLD) {
+        // ── Large rise (≥ 8 L): mirrors Python's handle_fuel_rise thread ───────
+        const baselineFuel = prev.fuel;
+        const baselineTs   = prev.ts;
+        const consolidationEndMs =
+          baselineTs.getTime() + REFUEL_CONSOLIDATION_MINUTES * 60 * 1000;
+
+        // Consolidation: find the true peak within the stabilisation window.
+        let peakFuel = row.fuel;
+        let k = i + 1;
+        while (k < validRows.length && validRows[k].ts.getTime() <= consolidationEndMs) {
+          const nextFuel = validRows[k].fuel;
+          if (nextFuel > peakFuel) {
+            peakFuel = nextFuel;
+          } else if (nextFuel < baselineFuel + RISE_THRESHOLD) {
+            break;
+          }
+          k++;
+        }
+
+        const totalAdded = peakFuel - baselineFuel;
+
+        if (totalAdded >= RISE_THRESHOLD) {
+          // ── Layer A: isFakeRise (mirrors Python is_fake_rise) ────────────────
+          const fakeRise = isFakeRise(baselineTs, validRows);
+
+          // ── Layer B: isRecoveryRise (mirrors Python is_recovery_rise) ─────────
+          const recoveryRise =
+            !fakeRise && isRecoveryRise(baselineTs, baselineFuel, peakFuel, validRows);
+
+          // ── Layer C: isPostRefuelFallback (mirrors Python post-refuel verify) ──
+          const postFallback =
+            !fakeRise &&
+            !recoveryRise &&
+            isPostRefuelFallback(baselineTs, peakFuel, validRows);
+
+          if (!fakeRise && !recoveryRise && !postFallback) {
+            refuels.push({
+              at:         baselineTs.toISOString(),
+              fuelBefore: Math.round(baselineFuel * 100) / 100,
+              fuelAfter:  Math.round(peakFuel * 100) / 100,
+              added:      Math.round(totalAdded * 100) / 100,
+              unit,
+            });
+          }
+        }
+
+        // Skip past the consolidation window.
+        i = k;
+        continue;
       }
 
       i++;

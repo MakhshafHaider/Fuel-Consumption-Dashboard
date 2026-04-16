@@ -1,14 +1,18 @@
 /**
- * Shared fuel-drop filtering utilities that mirror the Python aysis-latest.py logic.
+ * Shared fuel-drop/rise filtering utilities that mirror the Python aysis-latest.py logic.
  *
  * Python constants mirrored here:
- *   FUEL_MEDIAN_SAMPLES         = 5      (Layer 1: median filter)
- *   DROP_THRESHOLD              = 8.0    (min drop size for an alert)
- *   SPIKE_WINDOW_MINUTES        = 7      (Layer 3: ±7 min fake-spike window)
- *   DROP_GATING_MAX_SPEED_KMH   = 10.0  (speed veto — mirrors Python's is_fake_spike movement check)
- *   POST_DROP_VERIFY_EPS_LITERS = 1.5   (Layer 4: recovery epsilon after drop)
- *   RISE_RECOVERY_EPS_LITERS    = 2.0   (refuel: recovery-rise epsilon)
- *   RISE_RECOVERY_LOOKBACK_MINUTES = 7  (refuel: lookback for recovery rise)
+ *   FUEL_MEDIAN_SAMPLES              = 5     (Layer 1: median filter)
+ *   DROP_THRESHOLD                   = 8.0   (min drop size for a drop alert)
+ *   RISE_THRESHOLD                   = 8.0   (min rise size for a refuel alert)
+ *   SPIKE_WINDOW_MINUTES             = 7     (Layer 3: ±7 min fake-spike / fake-rise window)
+ *   DROP_GATING_MAX_SPEED_KMH        = 10.0  (drop speed veto)
+ *   RISE_GATING_MAX_SPEED_KMH        = 10.0  (rise speed veto)
+ *   POST_DROP_VERIFY_EPS_LITERS      = 1.5   (Layer 4: drop recovery epsilon)
+ *   POST_REFUEL_VERIFY_EPS_LITERS    = 3.5   (refuel post-verify epsilon)
+ *   REFUEL_CONSOLIDATION_MINUTES     = 15    (merge multiple step-rises into one refuel)
+ *   RISE_RECOVERY_EPS_LITERS         = 2.0   (refuel: recovery-rise epsilon)
+ *   RISE_RECOVERY_LOOKBACK_MINUTES   = 7     (refuel: lookback for recovery rise)
  */
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -45,6 +49,34 @@ export const RISE_RECOVERY_EPS_LITERS = 2.0;
 
 /** Mirrors Python RISE_RECOVERY_LOOKBACK_MINUTES (= SPIKE_WINDOW_MINUTES = 7) */
 export const RISE_RECOVERY_LOOKBACK_MINUTES = 7;
+
+/**
+ * Mirrors Python RISE_THRESHOLD = 8.0.
+ * Minimum fuel increase (litres) for a rise to be counted as a real refuel.
+ * Anything below this is sensor oscillation.
+ */
+export const RISE_THRESHOLD = 8.0;
+
+/**
+ * Mirrors Python RISE_GATING_MAX_SPEED_KMH = 10.0.
+ * Post-event readings above this speed veto the refuel alert (vehicle is driving,
+ * not parked at a station).
+ */
+export const RISE_GATING_MAX_SPEED_KMH = 10.0;
+
+/**
+ * Mirrors Python REFUEL_MAX_TRACK_SECONDS = 15 * 60.
+ * After the initial rise, scan forward up to this many minutes to find the
+ * true peak (consolidates multiple step-rises into one refuel event).
+ */
+export const REFUEL_CONSOLIDATION_MINUTES = 15;
+
+/**
+ * Mirrors Python POST_REFUEL_VERIFY_EPS_LITERS = 3.5.
+ * After the stabilisation window, if fuel fell back more than this from the
+ * peak, treat the rise as a fake jerk / sensor spike.
+ */
+export const POST_REFUEL_VERIFY_EPS_LITERS = 3.5;
 
 // ─── Typed row ────────────────────────────────────────────────────────────────
 
@@ -288,4 +320,108 @@ export function isRecoveryRise(
   }
 
   return false;
+}
+
+// ─── Refuel: Fake-Rise Detection ─────────────────────────────────────────────
+
+/**
+ * Mirrors Python is_fake_rise() from aysis-latest.py.
+ *
+ * Inverse of isFakeSpike: looks at a ±SPIKE_WINDOW_MINUTES window around
+ * `riseAt` and decides whether the observed rise is a real sustained refuel
+ * or a transient sensor oscillation.
+ *
+ * Returns true  → fake rise (sensor noise / brief jerk / vehicle moving)
+ *                  → suppress refuel alert
+ * Returns false → fuel stayed high → real confirmed refuel → allow alert
+ *
+ * ── Speed veto (mirrors Python is_fake_rise lines 2182-2195) ─────────────────
+ * If ANY post-event reading (ts > riseAt) has speed > RISE_GATING_MAX_SPEED_KMH
+ * the rise is treated as a sensor transient during driving — not a parked refuel.
+ * Note: Python only applies the speed veto to post-event rows (vehicle driving
+ * TO the station before the event is normal and must not veto a real refuel).
+ *
+ * ── Fuel-pattern checks (mirrors Python is_fake_rise lines 2213-2231) ────────
+ * 1. finalFuel <= startFuel → rose then fell back → fake
+ * 2. |finalFuel - startFuel| <= RISE_THRESHOLD → did not sustain → fake
+ * 3. Finds first large sub-rise and checks if fuel stayed high afterwards
+ */
+export function isFakeRise(
+  riseAt: Date,
+  allRows: FuelReading[],
+  spikeWindowMinutes: number = SPIKE_WINDOW_MINUTES,
+  riseThreshold: number      = RISE_THRESHOLD,
+  maxSpeedKmh: number        = RISE_GATING_MAX_SPEED_KMH,
+): boolean {
+  const windowMs = spikeWindowMinutes * 60 * 1000;
+  const winStart = new Date(riseAt.getTime() - windowMs);
+  const winEnd   = new Date(riseAt.getTime() + windowMs);
+
+  const readings = allRows.filter((r) => r.ts >= winStart && r.ts <= winEnd);
+  if (readings.length < 2) return false; // not enough data → assume real
+
+  // ── Speed veto: only post-event rows (vehicle was driving TO the station
+  // before the refuel event — that should NOT veto a real refuel). ──────────
+  const movedAfterRise = readings.some(
+    (r) => r.ts > riseAt && (r.speed ?? 0) > maxSpeedKmh,
+  );
+  if (movedAfterRise) return true;
+
+  // ── Fuel-pattern checks ───────────────────────────────────────────────────
+  const startFuel = readings[0].fuel;
+  const finalFuel = readings[readings.length - 1].fuel;
+
+  // Rose then fell back to or below start → fake
+  if (finalFuel <= startFuel) return true;
+
+  // Did not sustain the rise → fake
+  if (Math.abs(finalFuel - startFuel) <= riseThreshold) return true;
+
+  // Find first large sub-rise and check if it stayed high
+  for (let i = 0; i < readings.length - 1; i++) {
+    const delta = readings[i + 1].fuel - readings[i].fuel;
+    if (delta >= riseThreshold) {
+      const stayedHigh = readings
+        .slice(i + 1)
+        .every((r) => Math.abs(r.fuel - readings[i].fuel) > riseThreshold);
+      return !stayedHigh; // stayed high → real; fell back → fake
+    }
+  }
+
+  return false;
+}
+
+// ─── Refuel: Post-Verify Fallback ────────────────────────────────────────────
+
+/**
+ * Mirrors Python's post-refuel verify step (POST_REFUEL_VERIFY_SECONDS = 420 s / 7 min).
+ *
+ * After the consolidation window Python waits POST_REFUEL_VERIFY_SECONDS and
+ * re-reads the live fuel.  If it fell back notably from the tracked peak the
+ * refuel is treated as a fake jerk/spike.
+ *
+ * For historical data we replicate this by looking at the period from
+ * +SPIKE_WINDOW_MINUTES to +2×SPIKE_WINDOW_MINUTES after `riseAt` (same
+ * approach as isPostDropRecovery does for drops).
+ *
+ * Returns true  → fuel fell back from peak → fake jerk → suppress refuel
+ * Returns false → fuel stayed high → real refuel confirmed
+ */
+export function isPostRefuelFallback(
+  riseAt: Date,
+  peakFuel: number,
+  allRows: FuelReading[],
+  spikeWindowMinutes: number = SPIKE_WINDOW_MINUTES,
+  eps: number                = POST_REFUEL_VERIFY_EPS_LITERS,
+): boolean {
+  const windowMs  = spikeWindowMinutes * 60 * 1000;
+  const postStart = new Date(riseAt.getTime() + windowMs);
+  const postEnd   = new Date(riseAt.getTime() + 2 * windowMs);
+
+  const postReadings = allRows.filter((r) => r.ts > postStart && r.ts <= postEnd);
+  if (postReadings.length === 0) return false; // no data → assume still high
+
+  const lastPostFuel = postReadings[postReadings.length - 1].fuel;
+  // Fell back more than eps from peak → fake jerk
+  return lastPostFuel < peakFuel - eps;
 }

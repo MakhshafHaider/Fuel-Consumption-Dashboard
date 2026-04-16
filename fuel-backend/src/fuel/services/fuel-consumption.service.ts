@@ -7,14 +7,20 @@ import {
   FuelReading,
   applyMedianFilter,
   isFakeSpike,
+  isFakeRise,
   isDropConfirmedAfterDelay,
   isPostDropRecovery,
+  isRecoveryRise,
+  isPostRefuelFallback,
   DROP_ALERT_THRESHOLD,
+  RISE_THRESHOLD,
   SPIKE_WINDOW_MINUTES,
   FUEL_MEDIAN_SAMPLES,
+  REFUEL_CONSOLIDATION_MINUTES,
 } from './fuel-drop-filter.util';
 
 const NOISE_THRESHOLD = 0.5;
+/** Used ONLY inside the drop window scan to detect a mid-window refuel and break early. */
 const REFUEL_THRESHOLD = 3.0;
 
 // Mirrors Python's MILEAGE_MAX_LITER_DROP_PER_READING = 2.0
@@ -255,14 +261,64 @@ export class FuelConsumptionService {
             isConfirmedDrop: false,
           });
         }
-      } else if (delta > REFUEL_THRESHOLD) {
-        refuels.push({
-          at:         ts.toISOString(),
-          fuelBefore: Math.round(prev.fuel * 100) / 100,
-          fuelAfter:  Math.round(fuel * 100) / 100,
-          added:      Math.round(delta * 100) / 100,
-          unit:       sensor.units || 'L',
-        });
+      } else if (delta >= RISE_THRESHOLD) {
+        // ── Large rise (≥ 8 L): mirrors Python's handle_fuel_rise thread ───────
+        const baselineFuel = prev.fuel;
+        const baselineTs   = prev.ts;
+        const consolidationEndMs =
+          baselineTs.getTime() + REFUEL_CONSOLIDATION_MINUTES * 60 * 1000;
+
+        // Consolidation: scan forward for up to REFUEL_CONSOLIDATION_MINUTES to
+        // find the true peak (Python polls every 20 s and tracks peak_fuel until
+        // fuel stabilises or max-track time elapses).
+        let peakFuel = fuel;
+        let k = i + 1;
+        while (k < transformed.length && transformed[k].ts.getTime() <= consolidationEndMs) {
+          const nextFuel = transformed[k].fuel;
+          if (nextFuel > peakFuel) {
+            peakFuel = nextFuel;
+          } else if (nextFuel < baselineFuel + RISE_THRESHOLD) {
+            // Fell back below rise threshold within the window → stop
+            break;
+          }
+          k++;
+        }
+
+        const totalAdded = peakFuel - baselineFuel;
+
+        if (totalAdded >= RISE_THRESHOLD) {
+          // ── Layer A: isFakeRise (mirrors Python is_fake_rise) ────────────────
+          // Checks ±7 min window: speed veto, fall-back pattern, sustained-high check.
+          const fakeRise = isFakeRise(baselineTs, transformed);
+
+          // ── Layer B: isRecoveryRise (mirrors Python is_recovery_rise) ─────────
+          // "Dip then recover" pattern: fuel was already near peak BEFORE the rise
+          // (sensor jerk, not real refueling).
+          const recoveryRise =
+            !fakeRise && isRecoveryRise(baselineTs, baselineFuel, peakFuel, transformed);
+
+          // ── Layer C: isPostRefuelFallback (mirrors Python post-refuel verify) ──
+          // 7 min after the rise window, if fuel fell back > 3.5 L from peak → fake.
+          const postFallback =
+            !fakeRise &&
+            !recoveryRise &&
+            isPostRefuelFallback(baselineTs, peakFuel, transformed);
+
+          if (!fakeRise && !recoveryRise && !postFallback) {
+            refuels.push({
+              at:         baselineTs.toISOString(),
+              fuelBefore: Math.round(baselineFuel * 100) / 100,
+              fuelAfter:  Math.round(peakFuel * 100) / 100,
+              added:      Math.round(totalAdded * 100) / 100,
+              unit:       sensor.units || 'L',
+            });
+          }
+        }
+
+        // Skip past the consolidation window (all merged into this one event).
+        lastFuel = transformed[Math.max(i, k - 1)]?.fuel ?? peakFuel;
+        i = k;
+        continue;
       }
 
       i++;

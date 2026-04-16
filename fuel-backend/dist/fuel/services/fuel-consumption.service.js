@@ -136,14 +136,42 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
                     });
                 }
             }
-            else if (delta > REFUEL_THRESHOLD) {
-                refuels.push({
-                    at: ts.toISOString(),
-                    fuelBefore: Math.round(prev.fuel * 100) / 100,
-                    fuelAfter: Math.round(fuel * 100) / 100,
-                    added: Math.round(delta * 100) / 100,
-                    unit: sensor.units || 'L',
-                });
+            else if (delta >= fuel_drop_filter_util_1.RISE_THRESHOLD) {
+                const baselineFuel = prev.fuel;
+                const baselineTs = prev.ts;
+                const consolidationEndMs = baselineTs.getTime() + fuel_drop_filter_util_1.REFUEL_CONSOLIDATION_MINUTES * 60 * 1000;
+                let peakFuel = fuel;
+                let k = i + 1;
+                while (k < transformed.length && transformed[k].ts.getTime() <= consolidationEndMs) {
+                    const nextFuel = transformed[k].fuel;
+                    if (nextFuel > peakFuel) {
+                        peakFuel = nextFuel;
+                    }
+                    else if (nextFuel < baselineFuel + fuel_drop_filter_util_1.RISE_THRESHOLD) {
+                        break;
+                    }
+                    k++;
+                }
+                const totalAdded = peakFuel - baselineFuel;
+                if (totalAdded >= fuel_drop_filter_util_1.RISE_THRESHOLD) {
+                    const fakeRise = (0, fuel_drop_filter_util_1.isFakeRise)(baselineTs, transformed);
+                    const recoveryRise = !fakeRise && (0, fuel_drop_filter_util_1.isRecoveryRise)(baselineTs, baselineFuel, peakFuel, transformed);
+                    const postFallback = !fakeRise &&
+                        !recoveryRise &&
+                        (0, fuel_drop_filter_util_1.isPostRefuelFallback)(baselineTs, peakFuel, transformed);
+                    if (!fakeRise && !recoveryRise && !postFallback) {
+                        refuels.push({
+                            at: baselineTs.toISOString(),
+                            fuelBefore: Math.round(baselineFuel * 100) / 100,
+                            fuelAfter: Math.round(peakFuel * 100) / 100,
+                            added: Math.round(totalAdded * 100) / 100,
+                            unit: sensor.units || 'L',
+                        });
+                    }
+                }
+                lastFuel = transformed[Math.max(i, k - 1)]?.fuel ?? peakFuel;
+                i = k;
+                continue;
             }
             i++;
         }
