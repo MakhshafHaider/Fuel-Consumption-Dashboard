@@ -43,7 +43,8 @@ function isDropConfirmedAfterDelay(dropTs, baselineFuel, allRows, dropThreshold 
     }
     const stillDropped = verifyRow.fuel < baselineFuel &&
         Math.abs(baselineFuel - verifyRow.fuel) >= dropThreshold;
-    const vehicleStationary = (verifyRow.speed ?? 0) <= maxSpeedKmh;
+    const isMovingWithIgnitionOn = verifyRow.ignitionOn === true && (verifyRow.speed ?? 0) > maxSpeedKmh;
+    const vehicleStationary = !isMovingWithIgnitionOn;
     return stillDropped && vehicleStationary;
 }
 function isFakeSpike(dropAt, allRows, spikeWindowMinutes = exports.SPIKE_WINDOW_MINUTES, dropThreshold = exports.DROP_ALERT_THRESHOLD, maxSpeedKmh = exports.DROP_GATING_MAX_SPEED_KMH) {

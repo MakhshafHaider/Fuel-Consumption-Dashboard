@@ -76,12 +76,15 @@ let TheftDetectionService = TheftDetectionService_1 = class TheftDetectionServic
             let ignitionOn = false;
             try {
                 const p = JSON.parse(row.params);
-                ignitionOn = p['acc'] === '1' || p['acc'] === 1 || p['io1'] === '1' || p['io1'] === 1;
+                ignitionOn =
+                    p['io239'] === '1' || p['io239'] === 1 ||
+                        p['acc'] === '1' || p['acc'] === 1 ||
+                        p['io1'] === '1' || p['io1'] === 1;
             }
             catch { }
             rawReadings.push({ ts, fuel: value, speed: row.speed, ignitionOn, lat: row.lat, lng: row.lng });
         }
-        const fuelOnly = rawReadings.map((r) => ({ ts: r.ts, fuel: r.fuel, speed: r.speed }));
+        const fuelOnly = rawReadings.map((r) => ({ ts: r.ts, fuel: r.fuel, speed: r.speed, ignitionOn: r.ignitionOn }));
         const filtered = (0, fuel_drop_filter_util_1.applyMedianFilter)(fuelOnly, fuel_drop_filter_util_1.FUEL_MEDIAN_SAMPLES);
         const readings = rawReadings.map((r, i) => ({ ...r, fuel: filtered[i].fuel }));
         const classifiedDrops = [];

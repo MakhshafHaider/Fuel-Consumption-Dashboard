@@ -85,6 +85,15 @@ export interface FuelReading {
   fuel: number;
   /** Vehicle speed at this reading (km/h). Used for speed-veto in isFakeSpike. */
   speed?: number;
+  /**
+   * True when the ignition key is on (io239 = 1).
+   * Used in isDropConfirmedAfterDelay to mirror Python's
+   * _is_allowed_for_fuel_drop_alarm: a drop is only confirmed when
+   * the engine is off OR the vehicle is stationary (speed ≤ gate).
+   * Spread by applyMedianFilter (via { ...r, fuel: median }) so it
+   * automatically flows to the filtered array without extra wiring.
+   */
+  ignitionOn?: boolean;
 }
 
 // ─── Layer 1: Median Filter ───────────────────────────────────────────────────
@@ -163,8 +172,18 @@ export function isDropConfirmedAfterDelay(
     verifyRow.fuel < baselineFuel &&
     Math.abs(baselineFuel - verifyRow.fuel) >= dropThreshold;
 
-  // Check 2: vehicle is stationary (Python: _is_allowed_for_fuel_drop_alarm)
-  const vehicleStationary = (verifyRow.speed ?? 0) <= maxSpeedKmh;
+  // Check 2: vehicle is stationary — mirrors Python _is_allowed_for_fuel_drop_alarm.
+  //
+  // Python gates on ignition (io239) AND speed:
+  //   • ignition OFF  → vehicle is parked → allow drop alert regardless of speed
+  //   • ignition ON + speed > DROP_GATING_MAX_SPEED_KMH → driving consumption → cancel
+  //   • ignition ON + speed ≤ threshold → idling/parked → allow
+  //
+  // If ignitionOn is undefined (caller didn't supply it) we fall back to the
+  // speed-only check so existing callers (fuel-consumption, fuel-stats) are unaffected.
+  const isMovingWithIgnitionOn =
+    verifyRow.ignitionOn === true && (verifyRow.speed ?? 0) > maxSpeedKmh;
+  const vehicleStationary = !isMovingWithIgnitionOn;
 
   return stillDropped && vehicleStationary;
 }

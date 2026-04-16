@@ -183,8 +183,8 @@ export default function RoutesPage() {
   const router = useRouter();
 
   // ── Period state (default: this week) ──────────────────────────────────────
-  const [preset,  setPreset]  = useState<Preset>("week");
-  const [range,   setRange]   = useState(() => getPresetRange("week"));
+  const [preset,  setPreset]  = useState<Preset>("today");
+  const [range,   setRange]   = useState(() => getPresetRange("today"));
   const [calOpen, setCalOpen] = useState(false);
   const calWrapRef = useRef<HTMLDivElement>(null);
 
@@ -310,7 +310,6 @@ export default function RoutesPage() {
     { key: "today", label: "Today" },
     { key: "week",  label: "This Week" },
     { key: "month", label: "This Month" },
-    { key: "custom",label: "Custom" },
   ];
 
   if (authLoading) return (
@@ -347,7 +346,7 @@ export default function RoutesPage() {
           {/* Center: period preset chips + custom calendar */}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {PRESETS.map(p => (
-              <div key={p.key} ref={p.key === "custom" ? calWrapRef : undefined} style={{ position: "relative" }}>
+              <div key={p.key} style={{ position: "relative" }}>
                 <button
                   onClick={() => applyPreset(p.key)}
                   style={{
@@ -602,13 +601,13 @@ export default function RoutesPage() {
                     </div>
                   )}
 
-                  {/* Alert banner: high drop rate */}
-                  {dropCount > 50 && (
+                  {/* Alert banner: multiple confirmed drops */}
+                  {confirmedDropCount > 3 && (
                     <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 8, padding: "7px 10px", display: "flex", alignItems: "flex-start", gap: 6 }}>
                       <AlertTriangle size={12} style={{ color: "#ef4444", flexShrink: 0, marginTop: 1 }} />
                       <div>
                         <p style={{ fontSize: 10, fontWeight: 700, color: "#ef4444" }}>High Drop Rate</p>
-                        <p style={{ fontSize: 9, color: "#9CA3AF" }}>{dropCount} drops detected — verify sensor calibration or check for fuel theft.</p>
+                        <p style={{ fontSize: 9, color: "#9CA3AF" }}>{confirmedDropCount} confirmed drops detected — check for fuel theft or sensor issues.</p>
                       </div>
                     </div>
                   )}

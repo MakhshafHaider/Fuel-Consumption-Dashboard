@@ -162,7 +162,13 @@ export class TheftDetectionService {
       let ignitionOn = false;
       try {
         const p = JSON.parse(row.params) as Record<string, string | number>;
-        ignitionOn = p['acc'] === '1' || p['acc'] === 1 || p['io1'] === '1' || p['io1'] === 1;
+        // Python uses io239 as the authoritative ignition key (source-of-truth per
+        // backfill_trip_segments_for_window comment).  Fall back to acc / io1 for
+        // devices that don't expose io239.
+        ignitionOn =
+          p['io239'] === '1' || p['io239'] === 1 ||
+          p['acc']   === '1' || p['acc']   === 1 ||
+          p['io1']   === '1' || p['io1']   === 1;
       } catch { /* no ignition info */ }
 
       rawReadings.push({ ts, fuel: value, speed: row.speed, ignitionOn, lat: row.lat, lng: row.lng });
@@ -170,8 +176,13 @@ export class TheftDetectionService {
 
     // ── Layer 1: Median Filter ─────────────────────────────────────────────
     // Mirrors Python _filter_fuel_for_alarms() / FUEL_MEDIAN_SAMPLES = 5.
-    // Speed is included so isFakeSpike (Layer 3) can apply the movement veto.
-    const fuelOnly: FuelReading[] = rawReadings.map((r) => ({ ts: r.ts, fuel: r.fuel, speed: r.speed }));
+    // Speed AND ignitionOn are included so the downstream checks can apply:
+    //   • isFakeSpike (Layer 3): speed veto
+    //   • isDropConfirmedAfterDelay (Layer 2): ignition + speed gate, mirroring
+    //     Python's _is_allowed_for_fuel_drop_alarm (io239 / io240 checks).
+    // applyMedianFilter spreads all fields via { ...r, fuel: median }, so
+    // ignitionOn survives the filter and reaches isDropConfirmedAfterDelay.
+    const fuelOnly: FuelReading[] = rawReadings.map((r) => ({ ts: r.ts, fuel: r.fuel, speed: r.speed, ignitionOn: r.ignitionOn }));
     const filtered  = applyMedianFilter(fuelOnly, FUEL_MEDIAN_SAMPLES);
 
     // Merge median-filtered fuel values back in, keeping the metadata from rawReadings.

@@ -13,6 +13,7 @@ export interface FuelReading {
     ts: Date;
     fuel: number;
     speed?: number;
+    ignitionOn?: boolean;
 }
 export declare function applyMedianFilter(readings: FuelReading[], windowSize?: number): FuelReading[];
 export declare function isDropConfirmedAfterDelay(dropTs: Date, baselineFuel: number, allRows: FuelReading[], dropThreshold?: number, maxSpeedKmh?: number, maxGapMinutes?: number): boolean;

@@ -59,10 +59,6 @@ export default function FuelSensorsBar({ sensorsData, loading }: Props) {
             >
               <FlaskConical size={11} />
               <span>{sensor.name}</span>
-              <span style={{ opacity: 0.5 }}>·</span>
-              <span style={{ fontWeight: 400 }}>{sensor.param}</span>
-              <span style={{ opacity: 0.5 }}>·</span>
-              <span className="capitalize">{method}</span>
             </div>
           );
         })}
