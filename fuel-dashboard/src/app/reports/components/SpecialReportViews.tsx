@@ -3,6 +3,7 @@
 import { memo, useMemo } from "react";
 import { EnhancedChart, RankingTable, Heatmap } from "@/components/reports";
 import { MapPin, Clock, ChevronLeft, ChevronDown } from "lucide-react";
+import { fmtDateTime } from "@/lib/dateUtils";
 
 interface SpecialReportViewsProps {
   activeReport: string;
@@ -20,12 +21,7 @@ const formatNumber = (num: number, decimals = 1): string => {
   return num.toFixed(decimals);
 };
 
-const formatDateTime = (iso: string): string => {
-  const d = new Date(iso);
-  return isNaN(d.getTime())
-    ? "—"
-    : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-};
+const formatDateTime = (iso: string): string => fmtDateTime(iso);
 
 function SpecialReportViewsComponent({
   activeReport,

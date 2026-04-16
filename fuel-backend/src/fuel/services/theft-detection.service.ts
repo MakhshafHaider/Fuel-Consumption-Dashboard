@@ -2,14 +2,32 @@ import { Injectable, Logger } from '@nestjs/common';
 import { FuelSensor } from './fuel-sensor-resolver.service';
 import { FuelTransformService } from './fuel-transform.service';
 import { DynamicTableQueryService, DataRow } from './dynamic-table-query.service';
+import {
+  FuelReading,
+  applyMedianFilter,
+  isFakeSpike,
+  isDropConfirmedAfterDelay,
+  isPostDropRecovery,
+  DROP_ALERT_THRESHOLD,
+  SPIKE_WINDOW_MINUTES,
+  FUEL_MEDIAN_SAMPLES,
+} from './fuel-drop-filter.util';
+
+// ─── Thresholds ───────────────────────────────────────────────────────────────
 
 const NOISE_THRESHOLD = 0.5;
+const REFUEL_THRESHOLD = 3.0;
 
-// Thresholds for theft detection
-const SUSPICIOUS_DROP_LITERS = 5.0;      // Drops > 5L are suspicious
-const THEFT_DROP_LITERS = 15.0;          // Drops > 15L are potential theft
-const STATIONARY_SPEED_THRESHOLD = 2;    // Speed < 2 km/h = stationary
-const RAPID_DROP_MINUTES = 5;            // Drop happening within 5 minutes = rapid
+/** Mirrors Python DROP_THRESHOLD = 8.0 — drops below this are "normal consumption". */
+const SUSPICIOUS_DROP_LITERS = DROP_ALERT_THRESHOLD;
+/** Drops > 15 L that are confirmed (not fake) are potential theft. */
+const THEFT_DROP_LITERS = 15.0;
+/** Speed < 2 km/h = stationary (Python: IDLE_SPEED_KMH ≈ 10; we keep 2 for theft context). */
+const STATIONARY_SPEED_THRESHOLD = 2;
+/** Drop spanning ≤ 5 minutes is considered "rapid". */
+const RAPID_DROP_MINUTES = 5;
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ClassifiedDropEvent {
   at: string;
@@ -25,6 +43,12 @@ export interface ClassifiedDropEvent {
   lng: number;
   severity: 'low' | 'medium' | 'high';
   reason: string;
+  /**
+   * True when the drop passed ALL four Python filter layers:
+   *   L1 median filter, L3 is_fake_spike, L4 post-drop verify.
+   * False = sensor noise / continuous fluctuation — shown but not alerted.
+   */
+  isConfirmedDrop: boolean;
 }
 
 export interface TheftDetectionResult {
@@ -42,10 +66,12 @@ export interface TheftDetectionResult {
     theftFuelLost: number;
   };
   riskLevel: 'low' | 'medium' | 'high';
-  riskScore: number; // 0-100
+  riskScore: number;
   drops: ClassifiedDropEvent[];
   alerts: string[];
 }
+
+// ─── Service ──────────────────────────────────────────────────────────────────
 
 @Injectable()
 export class TheftDetectionService {
@@ -67,16 +93,17 @@ export class TheftDetectionService {
 
     const classifiedDrops = this.analyzeAndClassifyDrops(rows, sensor, imei);
 
-    // Calculate summary stats
-    const normalDrops = classifiedDrops.filter(d => d.type === 'normal');
-    const suspiciousDrops = classifiedDrops.filter(d => d.type === 'suspicious');
-    const theftDrops = classifiedDrops.filter(d => d.type === 'theft');
+    // Only count drops that passed all filter layers (isConfirmedDrop) toward
+    // suspicious/theft totals — mirroring Python's alert suppression.
+    const confirmedDrops   = classifiedDrops.filter((d) => d.isConfirmedDrop);
+    const normalDrops      = classifiedDrops.filter((d) => d.type === 'normal');
+    const suspiciousDrops  = confirmedDrops.filter((d) => d.type === 'suspicious');
+    const theftDrops       = confirmedDrops.filter((d) => d.type === 'theft');
 
-    const totalFuelLost = classifiedDrops.reduce((sum, d) => sum + d.consumed, 0);
-    const suspiciousFuelLost = suspiciousDrops.reduce((sum, d) => sum + d.consumed, 0);
-    const theftFuelLost = theftDrops.reduce((sum, d) => sum + d.consumed, 0);
+    const totalFuelLost      = classifiedDrops.reduce((s, d) => s + d.consumed, 0);
+    const suspiciousFuelLost = suspiciousDrops.reduce((s, d) => s + d.consumed, 0);
+    const theftFuelLost      = theftDrops.reduce((s, d) => s + d.consumed, 0);
 
-    // Calculate risk score (0-100)
     const riskScore = this.calculateRiskScore(
       classifiedDrops.length,
       suspiciousDrops.length,
@@ -84,26 +111,22 @@ export class TheftDetectionService {
       totalFuelLost,
       suspiciousFuelLost + theftFuelLost,
     );
-
-    // Determine risk level
     const riskLevel = riskScore >= 70 ? 'high' : riskScore >= 40 ? 'medium' : 'low';
-
-    // Generate alerts
-    const alerts = this.generateAlerts(theftDrops, suspiciousDrops, riskLevel);
+    const alerts    = this.generateAlerts(theftDrops, suspiciousDrops, riskLevel);
 
     return {
       imei,
       from: from.toISOString(),
-      to: to.toISOString(),
+      to:   to.toISOString(),
       unit: sensor.units || 'L',
       summary: {
-        totalDrops: classifiedDrops.length,
-        normalDrops: normalDrops.length,
+        totalDrops:      classifiedDrops.length,
+        normalDrops:     normalDrops.length,
         suspiciousDrops: suspiciousDrops.length,
-        theftDrops: theftDrops.length,
-        totalFuelLost: Math.round(totalFuelLost * 100) / 100,
+        theftDrops:      theftDrops.length,
+        totalFuelLost:      Math.round(totalFuelLost      * 100) / 100,
         suspiciousFuelLost: Math.round(suspiciousFuelLost * 100) / 100,
-        theftFuelLost: Math.round(theftFuelLost * 100) / 100,
+        theftFuelLost:      Math.round(theftFuelLost      * 100) / 100,
       },
       riskLevel,
       riskScore: Math.round(riskScore),
@@ -112,84 +135,178 @@ export class TheftDetectionService {
     };
   }
 
+  // ─── Core Analysis ──────────────────────────────────────────────────────────
+
   private analyzeAndClassifyDrops(
     rows: DataRow[],
     sensor: FuelSensor,
     imei: string,
   ): ClassifiedDropEvent[] {
-    const classifiedDrops: ClassifiedDropEvent[] = [];
+    // ── Step 1: transform every row → raw fuel readings ────────────────────
+    const rawReadings: Array<{
+      ts: Date;
+      fuel: number;
+      speed: number;
+      ignitionOn: boolean;
+      lat: number;
+      lng: number;
+    }> = [];
 
-    let prevRow: DataRow | null = null;
-    let prevFuel: number | null = null;
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const ts = new Date(row.dt_tracker);
-      const rawValue = this.transform.extractRawValue(
-        row.params,
-        sensor.param,
-        imei,
-        ts.toISOString(),
-      );
-
+    for (const row of rows) {
+      const ts       = new Date(row.dt_tracker);
+      const rawValue = this.transform.extractRawValue(row.params, sensor.param, imei, ts.toISOString());
       if (rawValue === null) continue;
-
       const { value } = this.transform.transform(rawValue, sensor);
       if (value === null) continue;
 
-      if (prevFuel !== null && prevRow !== null) {
-        const delta = value - prevFuel;
+      let ignitionOn = false;
+      try {
+        const p = JSON.parse(row.params) as Record<string, string | number>;
+        ignitionOn = p['acc'] === '1' || p['acc'] === 1 || p['io1'] === '1' || p['io1'] === 1;
+      } catch { /* no ignition info */ }
 
-        // Detect drop (fuel decrease)
-        if (delta < -NOISE_THRESHOLD) {
-          const consumed = Math.abs(delta);
-          const dropTs = new Date(prevRow.dt_tracker);
+      rawReadings.push({ ts, fuel: value, speed: row.speed, ignitionOn, lat: row.lat, lng: row.lng });
+    }
 
-          // Parse ignition state
-          let ignitionOn = false;
-          try {
-            const p = JSON.parse(row.params) as Record<string, string | number>;
-            ignitionOn = p['acc'] === '1' || p['acc'] === 1 || p['io1'] === '1' || p['io1'] === 1;
-          } catch {
-            // No ignition info available
+    // ── Layer 1: Median Filter ─────────────────────────────────────────────
+    // Mirrors Python _filter_fuel_for_alarms() / FUEL_MEDIAN_SAMPLES = 5.
+    // Speed is included so isFakeSpike (Layer 3) can apply the movement veto.
+    const fuelOnly: FuelReading[] = rawReadings.map((r) => ({ ts: r.ts, fuel: r.fuel, speed: r.speed }));
+    const filtered  = applyMedianFilter(fuelOnly, FUEL_MEDIAN_SAMPLES);
+
+    // Merge median-filtered fuel values back in, keeping the metadata from rawReadings.
+    const readings = rawReadings.map((r, i) => ({ ...r, fuel: filtered[i].fuel }));
+
+    const classifiedDrops: ClassifiedDropEvent[] = [];
+    const unit = sensor.units || 'L';
+
+    // ── Step 2: Index-based walk so we can skip forward after consolidation ─
+    let i = 0;
+    while (i < readings.length) {
+      if (i === 0) { i++; continue; }
+
+      const curr = readings[i];
+      const prev = readings[i - 1];
+      const delta         = curr.fuel - prev.fuel;
+      const singleConsumed = Math.abs(delta);
+
+      if (delta < -NOISE_THRESHOLD) {
+        if (singleConsumed >= DROP_ALERT_THRESHOLD) {
+          // ── Large drop (≥ 8 L) — mirrors Python handle_fuel_drop thread ──
+          //
+          // Layer 2 (Verify Delay): Python waits 80 s and re-reads the CURRENT
+          // fuel from gs_objects. For historical data we replicate this by
+          // scanning forward through all readings within SPIKE_WINDOW_MINUTES
+          // from the baseline timestamp and using the last reading in the window
+          // as the "verified" final fuel level.
+          const baselineFuel = prev.fuel;
+          const baselineTs   = prev.ts;
+          const windowEndMs  = baselineTs.getTime() + SPIKE_WINDOW_MINUTES * 60 * 1000;
+
+          // Advance, accumulate the lowest verified level within the window.
+          // Stop early if fuel recovered toward baseline (fake spike) or a refuel
+          // occurs within the window.
+          let verifiedFuel = curr.fuel;
+          let j = i + 1;
+          while (j < readings.length && readings[j].ts.getTime() <= windowEndMs) {
+            const nextFuel = readings[j].fuel;
+            if (nextFuel > baselineFuel - DROP_ALERT_THRESHOLD) break; // recovered → fake
+            if (nextFuel - verifiedFuel > REFUEL_THRESHOLD) break;      // refuel inside window
+            verifiedFuel = nextFuel;
+            j++;
           }
 
-          // Calculate duration (time between this and previous reading)
-          const durationMs = ts.getTime() - dropTs.getTime();
+          const totalConsumed = baselineFuel - verifiedFuel;
+
+          // ── Layer 2: Verify delay + speed gate ────────────────────────
+          // Mirrors Python handle_fuel_drop: re-read after 80 s, confirm
+          // drop still >= 8 L AND vehicle stationary.
+          const verifyPassed = isDropConfirmedAfterDelay(
+            curr.ts,       // drop timestamp
+            baselineFuel,
+            filtered,
+          );
+
+          // ── Layer 3: is_fake_spike (includes speed veto) ───────────────
+          // Mirrors Python is_fake_spike(±SPIKE_WINDOW_MINUTES) — now also
+          // applies movement veto: if any post-event reading has speed
+          // > DROP_GATING_MAX_SPEED_KMH, treat as driving consumption noise.
+          const fake = !verifyPassed || isFakeSpike(baselineTs, filtered, SPIKE_WINDOW_MINUTES, DROP_ALERT_THRESHOLD);
+
+          // ── Layer 4: Post-drop verify ──────────────────────────────────
+          const postRecovery = !fake && isPostDropRecovery(
+            baselineTs, baselineFuel, filtered,
+            SPIKE_WINDOW_MINUTES,
+          );
+
+          const isConfirmedDrop =
+            totalConsumed >= DROP_ALERT_THRESHOLD && !fake && !postRecovery;
+
+          // Determine vehicle state at time of drop (from the reading that
+          // triggered the large drop).
+          const durationMs      = curr.ts.getTime() - prev.ts.getTime();
           const durationMinutes = Math.max(1, Math.round(durationMs / (1000 * 60)));
 
-          // Classify the drop
           const classification = this.classifyDrop(
-            consumed,
-            row.speed,
-            ignitionOn,
+            totalConsumed,
+            curr.speed,
+            curr.ignitionOn,
             durationMinutes,
           );
 
           classifiedDrops.push({
-            at: prevRow.dt_tracker instanceof Date ? prevRow.dt_tracker.toISOString() : prevRow.dt_tracker,
-            fuelBefore: Math.round(prevFuel * 100) / 100,
-            fuelAfter: Math.round(value * 100) / 100,
-            consumed: Math.round(consumed * 100) / 100,
-            unit: sensor.units || 'L',
-            type: classification.type,
-            speedAtDrop: row.speed,
-            ignitionOn,
+            at:             baselineTs.toISOString(),
+            fuelBefore:     Math.round(baselineFuel  * 100) / 100,
+            fuelAfter:      Math.round(verifiedFuel  * 100) / 100,
+            consumed:       Math.round(totalConsumed * 100) / 100,
+            unit,
+            type:           isConfirmedDrop ? classification.type : 'normal',
+            speedAtDrop:    curr.speed,
+            ignitionOn:     curr.ignitionOn,
             durationMinutes,
-            lat: row.lat,
-            lng: row.lng,
-            severity: classification.severity,
-            reason: classification.reason,
+            lat:            curr.lat,
+            lng:            curr.lng,
+            severity:       isConfirmedDrop ? classification.severity : 'low',
+            reason:         isConfirmedDrop
+              ? classification.reason
+              : `Sensor fluctuation / noise suppressed by spike filter (${totalConsumed.toFixed(1)} L oscillation)`,
+            isConfirmedDrop,
+          });
+
+          i = j;
+          continue;
+        } else {
+          // ── Small drop (< 8 L): normal consumption — no alert ──────────
+          const durationMs      = curr.ts.getTime() - prev.ts.getTime();
+          const durationMinutes = Math.max(1, Math.round(durationMs / (1000 * 60)));
+          const classification  = this.classifyDrop(singleConsumed, curr.speed, curr.ignitionOn, durationMinutes);
+
+          classifiedDrops.push({
+            at:             prev.ts.toISOString(),
+            fuelBefore:     Math.round(prev.fuel  * 100) / 100,
+            fuelAfter:      Math.round(curr.fuel  * 100) / 100,
+            consumed:       Math.round(singleConsumed * 100) / 100,
+            unit,
+            type:           'normal',
+            speedAtDrop:    curr.speed,
+            ignitionOn:     curr.ignitionOn,
+            durationMinutes,
+            lat:            curr.lat,
+            lng:            curr.lng,
+            severity:       'low',
+            reason:         classification.reason,
+            isConfirmedDrop: false,
           });
         }
       }
 
-      prevFuel = value;
-      prevRow = row;
+      i++;
     }
 
     return classifiedDrops;
   }
+
+  // ─── Drop Classification ────────────────────────────────────────────────────
 
   private classifyDrop(
     consumed: number,
@@ -198,70 +315,61 @@ export class TheftDetectionService {
     durationMinutes: number,
   ): { type: 'normal' | 'suspicious' | 'theft'; severity: 'low' | 'medium' | 'high'; reason: string } {
     const isStationary = speed < STATIONARY_SPEED_THRESHOLD;
-    const isRapid = durationMinutes <= RAPID_DROP_MINUTES;
+    const isRapid      = durationMinutes <= RAPID_DROP_MINUTES;
 
-    // THEFT detection
     if (consumed >= THEFT_DROP_LITERS) {
       if (isStationary && !ignitionOn) {
         return {
-          type: 'theft',
-          severity: 'high',
-          reason: `Large fuel drop (${consumed.toFixed(1)}L) while vehicle stationary and ignition off - possible fuel siphoning`,
+          type: 'theft', severity: 'high',
+          reason: `Large fuel drop (${consumed.toFixed(1)}L) while stationary and ignition off — possible fuel siphoning`,
         };
       }
       if (isStationary) {
         return {
-          type: 'theft',
-          severity: 'high',
-          reason: `Large fuel drop (${consumed.toFixed(1)}L) while stationary - investigate for theft`,
+          type: 'theft', severity: 'high',
+          reason: `Large fuel drop (${consumed.toFixed(1)}L) while stationary — investigate for theft`,
         };
       }
       return {
-        type: 'theft',
-        severity: 'high',
-        reason: `Very large fuel drop (${consumed.toFixed(1)}L) - potential theft or major leak`,
+        type: 'theft', severity: 'high',
+        reason: `Very large fuel drop (${consumed.toFixed(1)}L) — potential theft or major leak`,
       };
     }
 
-    // SUSPICIOUS detection
     if (consumed >= SUSPICIOUS_DROP_LITERS) {
       if (isStationary && !ignitionOn) {
         return {
-          type: 'suspicious',
-          severity: 'medium',
-          reason: `Fuel drop (${consumed.toFixed(1)}L) while stationary with ignition off - possible theft`,
+          type: 'suspicious', severity: 'medium',
+          reason: `Fuel drop (${consumed.toFixed(1)}L) while stationary with ignition off — possible theft`,
         };
       }
       if (isStationary && isRapid) {
         return {
-          type: 'suspicious',
-          severity: 'medium',
-          reason: `Rapid fuel drop (${consumed.toFixed(1)}L in ${durationMinutes}min) while stationary`,
+          type: 'suspicious', severity: 'medium',
+          reason: `Rapid fuel drop (${consumed.toFixed(1)}L in ${durationMinutes} min) while stationary`,
         };
       }
       if (isRapid) {
         return {
-          type: 'suspicious',
-          severity: 'medium',
-          reason: `Rapid fuel consumption (${consumed.toFixed(1)}L in ${durationMinutes}min)`,
+          type: 'suspicious', severity: 'medium',
+          reason: `Rapid fuel consumption (${consumed.toFixed(1)}L in ${durationMinutes} min)`,
         };
       }
       return {
-        type: 'suspicious',
-        severity: 'low',
-        reason: `Large fuel drop (${consumed.toFixed(1)}L) - possible leak or measurement error`,
+        type: 'suspicious', severity: 'low',
+        reason: `Large fuel drop (${consumed.toFixed(1)}L) — possible leak or measurement error`,
       };
     }
 
-    // NORMAL consumption
     return {
-      type: 'normal',
-      severity: 'low',
+      type: 'normal', severity: 'low',
       reason: isStationary
         ? `Normal idle consumption (${consumed.toFixed(1)}L)`
         : `Normal driving consumption (${consumed.toFixed(1)}L)`,
     };
   }
+
+  // ─── Risk Score & Alerts ────────────────────────────────────────────────────
 
   private calculateRiskScore(
     totalDrops: number,
@@ -271,20 +379,16 @@ export class TheftDetectionService {
     suspiciousFuelLost: number,
   ): number {
     let score = 0;
-
-    // Theft events carry highest weight
     score += theftCount * 25;
-
-    // Suspicious events
     score += suspiciousCount * 10;
-
-    // Fuel loss percentage (if > 30% of total is suspicious, add points)
     if (totalFuelLost > 0) {
       const suspiciousPercentage = (suspiciousFuelLost / totalFuelLost) * 100;
       score += suspiciousPercentage * 0.5;
     }
-
-    // Cap at 100
+    // Suppress false positives from large raw drop counts (unconfirmed noise).
+    // Apply a small penalty only for the confirmed drop ratio.
+    const confirmedRatio = totalDrops > 0 ? (suspiciousCount + theftCount) / totalDrops : 0;
+    if (confirmedRatio < 0.1) score = Math.min(score, 15); // mostly noise → cap low
     return Math.min(100, score);
   }
 
@@ -294,23 +398,23 @@ export class TheftDetectionService {
     riskLevel: 'low' | 'medium' | 'high',
   ): string[] {
     const alerts: string[] = [];
-
     if (theftDrops.length > 0) {
-      const totalTheftFuel = theftDrops.reduce((sum, d) => sum + d.consumed, 0);
-      alerts.push(`CRITICAL: ${theftDrops.length} potential theft event(s) detected with ${totalTheftFuel.toFixed(1)}L fuel loss`);
+      const totalTheftFuel = theftDrops.reduce((s, d) => s + d.consumed, 0);
+      alerts.push(
+        `CRITICAL: ${theftDrops.length} potential theft event(s) detected with ${totalTheftFuel.toFixed(1)}L fuel loss`,
+      );
     }
-
     if (suspiciousDrops.length > 0) {
-      const totalSuspiciousFuel = suspiciousDrops.reduce((sum, d) => sum + d.consumed, 0);
-      alerts.push(`WARNING: ${suspiciousDrops.length} suspicious fuel drop(s) with ${totalSuspiciousFuel.toFixed(1)}L fuel loss`);
+      const totalSuspiciousFuel = suspiciousDrops.reduce((s, d) => s + d.consumed, 0);
+      alerts.push(
+        `WARNING: ${suspiciousDrops.length} suspicious fuel drop(s) with ${totalSuspiciousFuel.toFixed(1)}L fuel loss`,
+      );
     }
-
     if (riskLevel === 'high') {
       alerts.push('HIGH RISK: Immediate investigation recommended');
     } else if (riskLevel === 'medium') {
       alerts.push('MEDIUM RISK: Monitor fuel patterns closely');
     }
-
     return alerts;
   }
 }

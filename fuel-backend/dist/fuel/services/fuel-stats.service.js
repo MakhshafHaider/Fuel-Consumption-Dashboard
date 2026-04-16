@@ -14,8 +14,10 @@ exports.FuelStatsService = void 0;
 const common_1 = require("@nestjs/common");
 const fuel_transform_service_1 = require("./fuel-transform.service");
 const dynamic_table_query_service_1 = require("./dynamic-table-query.service");
+const fuel_drop_filter_util_1 = require("./fuel-drop-filter.util");
 const NOISE_THRESHOLD = 0.5;
 const REFUEL_THRESHOLD = 3.0;
+const MAX_SINGLE_READING_DROP = 2.0;
 let FuelStatsService = FuelStatsService_1 = class FuelStatsService {
     transform;
     dynQuery;
@@ -29,7 +31,7 @@ let FuelStatsService = FuelStatsService_1 = class FuelStatsService {
         this.logger.log(`Stats for IMEI ${imei}: processing ${rows.length} rows`);
         const transformedRows = this.transformRows(rows, sensor, imei);
         const { drops, refuels } = this.detectEvents(transformedRows, sensor.units || 'L');
-        const consumed = Math.round(drops.reduce((s, d) => s + d.consumed, 0) * 100) / 100;
+        const consumed = Math.round(drops.filter((d) => !d.isSensorJump).reduce((s, d) => s + d.consumed, 0) * 100) / 100;
         const refueled = Math.round(refuels.reduce((s, r) => s + r.added, 0) * 100) / 100;
         const estimatedCost = pricePerLiter !== null ? Math.round(consumed * pricePerLiter * 100) / 100 : null;
         const rangeDays = Math.max((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24), 1);
@@ -67,34 +69,74 @@ let FuelStatsService = FuelStatsService_1 = class FuelStatsService {
     detectEvents(rows, unit) {
         const drops = [];
         const refuels = [];
-        let prevFuel = null;
-        let prevTs = null;
-        for (const row of rows) {
-            if (row.fuel === null)
+        const rawValid = rows.filter((r) => r.fuel !== null);
+        const fuelReadings = rawValid.map((r) => ({ ts: r.ts, fuel: r.fuel, speed: r.speed }));
+        const validRows = (0, fuel_drop_filter_util_1.applyMedianFilter)(fuelReadings, fuel_drop_filter_util_1.FUEL_MEDIAN_SAMPLES);
+        let i = 0;
+        while (i < validRows.length) {
+            if (i === 0) {
+                i++;
                 continue;
-            if (prevFuel !== null && prevTs !== null) {
-                const delta = row.fuel - prevFuel;
-                if (delta < -NOISE_THRESHOLD) {
+            }
+            const row = validRows[i];
+            const prev = validRows[i - 1];
+            const delta = row.fuel - prev.fuel;
+            const singleConsumed = Math.abs(delta);
+            if (delta < -NOISE_THRESHOLD) {
+                if (singleConsumed >= fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD) {
+                    const baselineFuel = prev.fuel;
+                    const baselineTs = prev.ts;
+                    const windowEndMs = baselineTs.getTime() + fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES * 60 * 1000;
+                    let verifiedFuel = row.fuel;
+                    let j = i + 1;
+                    while (j < validRows.length && validRows[j].ts.getTime() <= windowEndMs) {
+                        const nextFuel = validRows[j].fuel;
+                        if (nextFuel > baselineFuel - fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD)
+                            break;
+                        if (nextFuel - verifiedFuel > REFUEL_THRESHOLD)
+                            break;
+                        verifiedFuel = nextFuel;
+                        j++;
+                    }
+                    const totalConsumed = baselineFuel - verifiedFuel;
+                    const verifyPassed = (0, fuel_drop_filter_util_1.isDropConfirmedAfterDelay)(row.ts, baselineFuel, validRows);
+                    const fake = !verifyPassed || (0, fuel_drop_filter_util_1.isFakeSpike)(baselineTs, validRows, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES, fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD);
+                    const postRecovery = !fake && (0, fuel_drop_filter_util_1.isPostDropRecovery)(baselineTs, baselineFuel, validRows, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES);
+                    const isConfirmedDrop = totalConsumed >= fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD && !fake && !postRecovery;
                     drops.push({
-                        at: prevTs,
-                        fuelBefore: Math.round(prevFuel * 100) / 100,
-                        fuelAfter: Math.round(row.fuel * 100) / 100,
-                        consumed: Math.round(Math.abs(delta) * 100) / 100,
+                        at: baselineTs.toISOString(),
+                        fuelBefore: Math.round(baselineFuel * 100) / 100,
+                        fuelAfter: Math.round(verifiedFuel * 100) / 100,
+                        consumed: Math.round(totalConsumed * 100) / 100,
                         unit,
+                        isSensorJump: false,
+                        isConfirmedDrop,
                     });
+                    i = j;
+                    continue;
                 }
-                else if (delta > REFUEL_THRESHOLD) {
-                    refuels.push({
-                        at: row.ts.toISOString(),
-                        fuelBefore: Math.round(prevFuel * 100) / 100,
+                else {
+                    drops.push({
+                        at: prev.ts.toISOString(),
+                        fuelBefore: Math.round(prev.fuel * 100) / 100,
                         fuelAfter: Math.round(row.fuel * 100) / 100,
-                        added: Math.round(delta * 100) / 100,
+                        consumed: Math.round(singleConsumed * 100) / 100,
                         unit,
+                        isSensorJump: singleConsumed > MAX_SINGLE_READING_DROP,
+                        isConfirmedDrop: false,
                     });
                 }
             }
-            prevFuel = row.fuel;
-            prevTs = row.ts.toISOString();
+            else if (delta > REFUEL_THRESHOLD) {
+                refuels.push({
+                    at: row.ts.toISOString(),
+                    fuelBefore: Math.round(prev.fuel * 100) / 100,
+                    fuelAfter: Math.round(row.fuel * 100) / 100,
+                    added: Math.round(delta * 100) / 100,
+                    unit,
+                });
+            }
+            i++;
         }
         return { drops, refuels };
     }
@@ -162,8 +204,10 @@ let FuelStatsService = FuelStatsService_1 = class FuelStatsService {
         return { liters: idleLiters, percentage };
     }
     calcTimeline(drops, refuels, transformedRows, unit) {
-        const biggestDrop = drops.length > 0
-            ? drops.reduce((max, d) => (d.consumed > max.consumed ? d : max))
+        const confirmedDrops = drops.filter(d => d.isConfirmedDrop);
+        const dropPool = confirmedDrops.length > 0 ? confirmedDrops : drops;
+        const biggestDrop = dropPool.length > 0
+            ? dropPool.reduce((max, d) => (d.consumed > max.consumed ? d : max))
             : null;
         const biggestRefuel = refuels.length > 0
             ? refuels.reduce((max, r) => (r.added > max.added ? r : max))

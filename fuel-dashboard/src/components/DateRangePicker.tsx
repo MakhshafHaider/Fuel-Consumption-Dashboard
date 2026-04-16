@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { fmtDateDisplay, toLocalMidnight } from "@/lib/dateUtils";
 
 interface Props {
   className?: string;
@@ -18,21 +19,8 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-function toMidnight(iso: string): Date {
-  const d = new Date(iso);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
-function fmtDisplay(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime())
-    ? "—"
-    : d.toLocaleDateString("en-US", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      });
-}
+const toMidnight = (iso: string) => toLocalMidnight(iso);
+const fmtDisplay  = (iso: string) => fmtDateDisplay(iso);
 
 export default function DateRangePicker({
   className,

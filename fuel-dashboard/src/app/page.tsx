@@ -8,13 +8,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   getVehicles, getDashboardSummary, getCurrentFuel,
   getFuelHistory, getFuelConsumption, getFuelStats,
-  getFuelSensors, getRefuelEvents,
-  defaultRange, dateInputToISO,
+  getFuelSensors, getRefuelEvents, getFleetTheftReport,
+  todayRange, dateInputToISO,
 } from "@/lib/api";
 import {
   Vehicle, DashboardSummaryData, FuelCurrentData,
   FuelHistoryData, FuelConsumptionData, FuelStatsData,
-  FuelSensorsData, RefuelEventsData, ApiError,
+  FuelSensorsData, RefuelEventsData, FleetTheftReportData, ApiError,
 } from "@/lib/types";
 
 import Sidebar              from "@/components/Sidebar";
@@ -60,7 +60,7 @@ const DashboardPage = memo(function DashboardPage() {
   const router = useRouter();
 
   // ── Date range ─────────────────────────────────────────────────────────────
-  const [range, setRange] = useState(defaultRange);
+  const [range, setRange] = useState(todayRange);
 
   // ── Vehicles ───────────────────────────────────────────────────────────────
   const [vehicles,      setVehicles]      = useState<Vehicle[]>([]);
@@ -80,6 +80,7 @@ const DashboardPage = memo(function DashboardPage() {
   const [fuelStats,     setFuelStats]     = useState<FuelStatsData | null>(null);
   const [fuelSensors,   setFuelSensors]   = useState<FuelSensorsData | null>(null);
   const [refuelEvents,  setRefuelEvents]  = useState<RefuelEventsData | null>(null);
+  const [fleetTheft,    setFleetTheft]    = useState<FleetTheftReportData | null>(null);
 
   const [loadingVehicleData, setLoadingVehicleData] = useState(false);
   const [vehicleDataError,   setVehicleDataError]   = useState<ApiError | Error | null>(null);
@@ -123,18 +124,25 @@ const DashboardPage = memo(function DashboardPage() {
       .finally(() => setLoadingSensors(false));
   }, [token, selectedImei, handle401]);
 
-  // ── Load dashboard summary ─────────────────────────────────────────────────
+  // ── Load dashboard summary + fleet theft overview ─────────────────────────
   useEffect(() => {
     if (!token) return;
     setLoadingSummary(true);
     setSummaryError(null);
-    getDashboardSummary(token, range.from, range.to)
-      .then(setSummary)
-      .catch(e => {
+
+    Promise.allSettled([
+      getDashboardSummary(token, range.from, range.to),
+      getFleetTheftReport(token, range.from, range.to),
+    ]).then(([summaryRes, theftRes]) => {
+      if (summaryRes.status === "fulfilled") setSummary(summaryRes.value);
+      else {
+        const e = summaryRes.reason;
         if (e instanceof ApiError && e.statusCode === 401) handle401();
         else setSummaryError(e instanceof ApiError ? e.userMessage : "Failed to load dashboard summary.");
-      })
-      .finally(() => setLoadingSummary(false));
+      }
+      if (theftRes.status === "fulfilled") setFleetTheft(theftRes.value);
+      // Silently ignore theft API failures (404 means not set up yet)
+    }).finally(() => setLoadingSummary(false));
   }, [token, range, handle401]);
 
   // ── Load per-vehicle data ──────────────────────────────────────────────────
@@ -323,44 +331,41 @@ const DashboardPage = memo(function DashboardPage() {
               <h3 className="text-sm font-semibold mb-3" style={{ color: "#1A1A2E" }}>Theft Detection Overview</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* Risk Score Card */}
-                <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
-                  <div className="flex items-center gap-3">
-                    <div className="relative w-14 h-14 flex items-center justify-center">
-                      <svg className="w-14 h-14 transform -rotate-90">
-                        <circle
-                          cx="28"
-                          cy="28"
-                          r="24"
-                          stroke="#FEE2E2"
-                          strokeWidth="4"
-                          fill="none"
-                        />
-                        <circle
-                          cx="28"
-                          cy="28"
-                          r="24"
-                          stroke="#EF4444"
-                          strokeWidth="4"
-                          fill="none"
-                          strokeDasharray="150.8"
-                          strokeDashoffset="0"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                      <span className="absolute text-sm font-bold" style={{ color: "#EF4444" }}>100</span>
+                {(() => {
+                  const score = fleetTheft?.fleetRiskScore ?? 0;
+                  const level = fleetTheft?.fleetRiskLevel ?? "low";
+                  const circumference = 150.8;
+                  const offset = circumference - (score / 100) * circumference;
+                  const riskColor = level === "critical" ? "#DC2626" : level === "high" ? "#EF4444" : level === "medium" ? "#F59E0B" : "#22C55E";
+                  const riskBg    = level === "critical" ? "#FEE2E2" : level === "high" ? "#FEF2F2" : level === "medium" ? "#FEF3C7" : "#F0FDF4";
+                  const riskLabel = level === "critical" ? "Critical" : level === "high" ? "High Risk" : level === "medium" ? "Monitor" : "Safe";
+                  return (
+                    <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
+                      <div className="flex items-center gap-3">
+                        <div className="relative w-14 h-14 flex items-center justify-center">
+                          <svg className="w-14 h-14 transform -rotate-90">
+                            <circle cx="28" cy="28" r="24" stroke="#F3F4F6" strokeWidth="4" fill="none" />
+                            <circle cx="28" cy="28" r="24" stroke={riskColor} strokeWidth="4" fill="none"
+                              strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" />
+                          </svg>
+                          <span className="absolute text-sm font-bold" style={{ color: riskColor }}>
+                            {loadingSummary ? "—" : score}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Risk Score</p>
+                          <p className="text-sm font-bold" style={{ color: "#1A1A2E" }}>{loadingSummary ? "—" : riskLabel}</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium" style={{ background: riskBg, color: riskColor }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        </svg>
+                        {loadingSummary ? "Loading…" : riskLabel}
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Risk Score</p>
-                      <p className="text-sm font-bold" style={{ color: "#1A1A2E" }}>High Risk</p>
-                    </div>
-                  </div>
-                  <div className="mt-3 inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium" style={{ background: "#FEE2E2", color: "#EF4444" }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                    </svg>
-                    High Risk
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Total Drops Card */}
                 <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
@@ -372,7 +377,9 @@ const DashboardPage = memo(function DashboardPage() {
                     </div>
                     <div>
                       <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Total Drops</p>
-                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>2864</p>
+                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>
+                        {loadingSummary ? "—" : (fleetTheft?.fleetSummary?.totalDrops ?? "—")}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -389,7 +396,10 @@ const DashboardPage = memo(function DashboardPage() {
                     </div>
                     <div>
                       <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Suspicious / Theft</p>
-                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>912 / 178</p>
+                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>
+                        {loadingSummary ? "—"
+                          : `${fleetTheft?.fleetSummary?.suspiciousDrops ?? "—"} / ${fleetTheft?.fleetSummary?.theftDrops ?? "—"}`}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -406,7 +416,12 @@ const DashboardPage = memo(function DashboardPage() {
                     </div>
                     <div>
                       <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Fuel Lost</p>
-                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>16,148.2L</p>
+                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>
+                        {loadingSummary ? "—"
+                          : fleetTheft?.fleetSummary?.totalFuelLost != null
+                            ? `${fleetTheft.fleetSummary.totalFuelLost.toFixed(1)}L`
+                            : "—"}
+                      </p>
                     </div>
                   </div>
                 </div>

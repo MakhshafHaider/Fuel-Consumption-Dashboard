@@ -16,16 +16,15 @@ import {
   Download,
   RefreshCw,
   Info,
-  CheckCircle2,
   XCircle,
   AlertCircle,
   Gauge,
-  Fuel,
   PiggyBank,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import Sidebar from "@/components/Sidebar";
 import DateRangePicker from "@/components/DateRangePicker";
+import { fmtDateTime } from "@/lib/dateUtils";
 import {
   ApiError,
   Vehicle,
@@ -49,7 +48,6 @@ import {
 } from "@/lib/api";
 import {
   PredictiveChart,
-  AnomalyDetector,
   CostProjectionCard,
   EfficiencyBenchmark,
   RealTimeMetrics,
@@ -232,8 +230,6 @@ function AnalyticsPage() {
     };
   }, [dailyTrendData, analyticsData.fleetAvgScore]);
 
-  // Anomalies would come from a dedicated API endpoint - for now showing empty state
-  const anomalies: any[] = [];
 
   // ─── Render KPI Cards ─────────────────────────────────────────────────────────
   const renderKpiCards = useMemo(() => {
@@ -289,7 +285,6 @@ function AnalyticsPage() {
           unit="%"
           icon={AlertTriangle}
           color="#f59e0b"
-          trend={{ value: 2.5, isPositive: false }}
           alert={analyticsData.idlePercentage > 20}
         />
         <KpiSparklineCard
@@ -297,7 +292,6 @@ function AnalyticsPage() {
           value={formatCurrency(analyticsData.potentialSavings)}
           icon={TrendingUp}
           color="#14b8a6"
-          trend={{ value: 12.5, isPositive: true }}
           highlight
         />
       </div>
@@ -492,37 +486,6 @@ function AnalyticsPage() {
             </div>
           </div>
         </div>
-        <div className="bg-white rounded-2xl p-6 border border-gray-100">
-          <h3 className="text-lg font-semibold mb-4">Savings Opportunities</h3>
-          <div className="space-y-4">
-            <div className="p-4 border border-green-200 bg-green-50 rounded-xl">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle2 className="w-5 h-5 text-green-600" />
-                <span className="font-medium text-green-800">Reduce Idle Time</span>
-              </div>
-              <p className="text-sm text-green-700 mb-3">
-                Implementing auto-shutoff policies could save up to 30% of idle fuel waste
-              </p>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-green-600">Potential savings:</span>
-                <span className="font-semibold text-green-700">{formatCurrency(analyticsData.idleCost * 0.3)}</span>
-              </div>
-            </div>
-            <div className="p-4 border border-blue-200 bg-blue-50 rounded-xl">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle2 className="w-5 h-5 text-blue-600" />
-                <span className="font-medium text-blue-800">Route Optimization</span>
-              </div>
-              <p className="text-sm text-blue-700 mb-3">
-                Optimizing routes could reduce total consumption by 8-12%
-              </p>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-blue-600">Potential savings:</span>
-                <span className="font-semibold text-blue-700">{formatCurrency(analyticsData.fuelCost * 0.1)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -531,33 +494,12 @@ function AnalyticsPage() {
   const renderEfficiency = () => (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-3">
           <EfficiencyBenchmark
             currentScore={analyticsData.fleetAvgScore}
-            industryAverage={65}
-            topPerformers={85}
             fleetData={fleetRankingData?.ranking || []}
             detailed
           />
-        </div>
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl p-6 border border-gray-100">
-            <h3 className="text-lg font-semibold mb-4">Efficiency Distribution</h3>
-            <div className="space-y-3">
-              {[
-                { label: "Excellent (80-100)", count: Math.round(analyticsData.totalVehicles * 0.2), color: "bg-green-500" },
-                { label: "Good (60-79)", count: Math.round(analyticsData.totalVehicles * 0.4), color: "bg-blue-500" },
-                { label: "Average (40-59)", count: Math.round(analyticsData.totalVehicles * 0.3), color: "bg-amber-500" },
-                { label: "Needs Work (&lt;40)", count: Math.round(analyticsData.totalVehicles * 0.1), color: "bg-red-500" },
-              ].map((item) => (
-                <div key={item.label} className="flex items-center gap-3">
-                  <div className={`w-3 h-3 rounded-full ${item.color}`} />
-                  <span className="text-sm flex-1">{item.label}</span>
-                  <span className="text-sm font-medium">{item.count} vehicles</span>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
       <ComparativeAnalysis
@@ -565,48 +507,6 @@ function AnalyticsPage() {
         title="Vehicle Performance Comparison"
         showAll
       />
-    </div>
-  );
-
-  // ─── Render Anomalies Tab ─────────────────────────────────────────────────────
-  const renderAnomalies = () => (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <AnomalyDetector
-            anomalies={anomalies}
-            title="Detected Anomalies"
-            subtitle="Unusual patterns requiring attention"
-          />
-        </div>
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl p-6 border border-gray-100">
-            <h3 className="text-lg font-semibold mb-4">Alert Status</h3>
-            <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-                  <CheckCircle2 className="w-5 h-5 text-green-600" />
-                </div>
-                <div>
-                  <p className="font-medium text-green-800">All Systems Normal</p>
-                  <p className="text-sm text-green-600">No anomalies detected in current period</p>
-                </div>
-              </div>
-            </div>
-            <p className="text-xs text-gray-500 mt-4">
-              Anomaly detection requires a dedicated analysis endpoint. Contact your administrator to enable this feature.
-            </p>
-          </div>
-          <RealTimeMetrics
-            metrics={[
-              { label: "Active Alerts", value: 0, change: "0" },
-              { label: "Fleet Health", value: "Good", change: "—" },
-              { label: "Last Scan", value: "Just now", change: "—" },
-            ]}
-            title="System Status"
-          />
-        </div>
-      </div>
     </div>
   );
 
@@ -747,7 +647,7 @@ function AnalyticsPage() {
         <div className="flex-shrink-0 px-6 py-2 bg-white/50 border-b border-gray-100">
           <div className="flex items-center justify-between">
             <p className="text-xs text-gray-500">
-              Last updated: {lastUpdated.toLocaleString()}
+              Last updated: {fmtDateTime(lastUpdated.toISOString())}
             </p>
             {loading && (
               <div className="flex items-center gap-2 text-xs text-gray-500">

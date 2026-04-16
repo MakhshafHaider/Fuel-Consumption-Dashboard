@@ -2,6 +2,7 @@
 
 import { AlertTriangle, TrendingUp, CheckCircle, Info } from "lucide-react";
 import { VehicleSummary } from "@/lib/types";
+import { fmtTime, fmtDateShort } from "@/lib/dateUtils";
 
 function CardSkeleton() {
   return (
@@ -73,13 +74,13 @@ export default function ActiveAlerts({ vehicles, loading }: Props) {
 
   vehicles.forEach((v) => {
     const initials = v.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-    const time = new Date(v.lastSeen).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+    const time = fmtTime(v.lastSeen);
 
     if (v.status === "offline") {
       alerts.push({
         type: "late",
         title: `${v.name} is offline`,
-        sub: `Last: ${new Date(v.lastSeen).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
+        sub: `Last: ${fmtDateShort(v.lastSeen)}`,
         initials, time,
       });
     } else if ((v.currentFuel ?? 0) < 10) {

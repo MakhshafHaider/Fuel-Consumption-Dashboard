@@ -3,9 +3,20 @@ import { FuelSensor } from './fuel-sensor-resolver.service';
 import { FuelTransformService } from './fuel-transform.service';
 import { DynamicTableQueryService, DataRow } from './dynamic-table-query.service';
 import { DropEvent, RefuelEvent } from './fuel-consumption.service';
+import {
+  FuelReading,
+  applyMedianFilter,
+  isFakeSpike,
+  isDropConfirmedAfterDelay,
+  isPostDropRecovery,
+  DROP_ALERT_THRESHOLD,
+  SPIKE_WINDOW_MINUTES,
+  FUEL_MEDIAN_SAMPLES,
+} from './fuel-drop-filter.util';
 
 const NOISE_THRESHOLD = 0.5;
 const REFUEL_THRESHOLD = 3.0;
+const MAX_SINGLE_READING_DROP = 2.0;
 
 export interface EfficiencyStats {
   totalDistanceKm: number;
@@ -64,9 +75,13 @@ export class FuelStatsService {
     this.logger.log(`Stats for IMEI ${imei}: processing ${rows.length} rows`);
 
     const transformedRows = this.transformRows(rows, sensor, imei);
+    // Pass speed from transformedRows into detectEvents so Layer 2 (verify delay
+    // speed gate) and Layer 3 (isFakeSpike movement veto) can use it.
     const { drops, refuels } = this.detectEvents(transformedRows, sensor.units || 'L');
 
-    const consumed = Math.round(drops.reduce((s, d) => s + d.consumed, 0) * 100) / 100;
+    const consumed = Math.round(
+      drops.filter((d) => !d.isSensorJump).reduce((s, d) => s + d.consumed, 0) * 100,
+    ) / 100;
     const refueled = Math.round(refuels.reduce((s, r) => s + r.added, 0) * 100) / 100;
     const estimatedCost =
       pricePerLiter !== null ? Math.round(consumed * pricePerLiter * 100) / 100 : null;
@@ -125,41 +140,101 @@ export class FuelStatsService {
   // ─── Drop & Refuel Detection ─────────────────────────────────────────────────
 
   private detectEvents(
-    rows: Array<{ ts: Date; fuel: number | null }>,
+    rows: Array<{ ts: Date; fuel: number | null; speed?: number }>,
     unit: string,
   ): { drops: DropEvent[]; refuels: RefuelEvent[] } {
     const drops: DropEvent[] = [];
     const refuels: RefuelEvent[] = [];
-    let prevFuel: number | null = null;
-    let prevTs: string | null = null;
 
-    for (const row of rows) {
-      if (row.fuel === null) continue;
+    const rawValid = rows.filter(
+      (r): r is { ts: Date; fuel: number; speed?: number } => r.fuel !== null,
+    );
 
-      if (prevFuel !== null && prevTs !== null) {
-        const delta = row.fuel - prevFuel;
+    // ── Layer 1: Median Filter ──────────────────────────────────────────────
+    // Mirrors Python _filter_fuel_for_alarms() / FUEL_MEDIAN_SAMPLES = 5.
+    // Speed is preserved unchanged (spread by applyMedianFilter).
+    const fuelReadings: FuelReading[] = rawValid.map((r) => ({ ts: r.ts, fuel: r.fuel, speed: r.speed }));
+    const validRows = applyMedianFilter(fuelReadings, FUEL_MEDIAN_SAMPLES);
 
-        if (delta < -NOISE_THRESHOLD) {
+    let i = 0;
+    while (i < validRows.length) {
+      if (i === 0) { i++; continue; }
+
+      const row  = validRows[i];
+      const prev = validRows[i - 1];
+      const delta = row.fuel - prev.fuel;
+      const singleConsumed = Math.abs(delta);
+
+      if (delta < -NOISE_THRESHOLD) {
+        if (singleConsumed >= DROP_ALERT_THRESHOLD) {
+          // ── Large drop (≥ 8 L): mirrors Python's handle_fuel_drop thread ──────
+          const baselineFuel = prev.fuel;
+          const baselineTs   = prev.ts;
+          const windowEndMs  = baselineTs.getTime() + SPIKE_WINDOW_MINUTES * 60 * 1000;
+
+          let verifiedFuel = row.fuel;
+          let j = i + 1;
+          while (j < validRows.length && validRows[j].ts.getTime() <= windowEndMs) {
+            const nextFuel = validRows[j].fuel;
+            if (nextFuel > baselineFuel - DROP_ALERT_THRESHOLD) break;
+            if (nextFuel - verifiedFuel > REFUEL_THRESHOLD) break;
+            verifiedFuel = nextFuel;
+            j++;
+          }
+
+          const totalConsumed = baselineFuel - verifiedFuel;
+
+          // ── Layer 2: Verify delay + speed gate ────────────────────────────────
+          // Mirrors Python: re-read after 80 s, check still dropped >= 8 L AND stationary.
+          const verifyPassed = isDropConfirmedAfterDelay(
+            row.ts,           // drop timestamp
+            baselineFuel,
+            validRows,
+          );
+
+          // ── Layer 3: Fake-spike check (includes speed veto) ───────────────────
+          const fake = !verifyPassed || isFakeSpike(baselineTs, validRows, SPIKE_WINDOW_MINUTES, DROP_ALERT_THRESHOLD);
+
+          // ── Layer 4: Post-drop verify ─────────────────────────────────────────
+          const postRecovery = !fake && isPostDropRecovery(baselineTs, baselineFuel, validRows, SPIKE_WINDOW_MINUTES);
+
+          const isConfirmedDrop =
+            totalConsumed >= DROP_ALERT_THRESHOLD && !fake && !postRecovery;
+
           drops.push({
-            at: prevTs,
-            fuelBefore: Math.round(prevFuel * 100) / 100,
-            fuelAfter: Math.round(row.fuel * 100) / 100,
-            consumed: Math.round(Math.abs(delta) * 100) / 100,
+            at:         baselineTs.toISOString(),
+            fuelBefore: Math.round(baselineFuel * 100) / 100,
+            fuelAfter:  Math.round(verifiedFuel * 100) / 100,
+            consumed:   Math.round(totalConsumed * 100) / 100,
             unit,
+            isSensorJump:    false,
+            isConfirmedDrop,
           });
-        } else if (delta > REFUEL_THRESHOLD) {
-          refuels.push({
-            at: row.ts.toISOString(),
-            fuelBefore: Math.round(prevFuel * 100) / 100,
-            fuelAfter: Math.round(row.fuel * 100) / 100,
-            added: Math.round(delta * 100) / 100,
+
+          i = j;
+          continue;
+        } else {
+          drops.push({
+            at:         prev.ts.toISOString(),
+            fuelBefore: Math.round(prev.fuel * 100) / 100,
+            fuelAfter:  Math.round(row.fuel * 100) / 100,
+            consumed:   Math.round(singleConsumed * 100) / 100,
             unit,
+            isSensorJump:    singleConsumed > MAX_SINGLE_READING_DROP,
+            isConfirmedDrop: false,
           });
         }
+      } else if (delta > REFUEL_THRESHOLD) {
+        refuels.push({
+          at:         row.ts.toISOString(),
+          fuelBefore: Math.round(prev.fuel * 100) / 100,
+          fuelAfter:  Math.round(row.fuel * 100) / 100,
+          added:      Math.round(delta * 100) / 100,
+          unit,
+        });
       }
 
-      prevFuel = row.fuel;
-      prevTs = row.ts.toISOString();
+      i++;
     }
 
     return { drops, refuels };
@@ -271,9 +346,13 @@ export class FuelStatsService {
     transformedRows: Array<{ ts: Date; fuel: number | null }>,
     unit: string,
   ): FuelTimeline {
+    // Prefer confirmed drops (≥ 8 L, stayed low 7 min) for biggestDrop; fall
+    // back to all drops only if none are confirmed (mirrors Python alert logic).
+    const confirmedDrops = drops.filter(d => d.isConfirmedDrop);
+    const dropPool = confirmedDrops.length > 0 ? confirmedDrops : drops;
     const biggestDrop =
-      drops.length > 0
-        ? drops.reduce((max, d) => (d.consumed > max.consumed ? d : max))
+      dropPool.length > 0
+        ? dropPool.reduce((max, d) => (d.consumed > max.consumed ? d : max))
         : null;
 
     const biggestRefuel =

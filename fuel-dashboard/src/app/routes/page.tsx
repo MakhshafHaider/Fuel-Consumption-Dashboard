@@ -14,6 +14,7 @@ import { getVehicles, getFuelConsumption, getCurrentFuel, getFuelStats } from "@
 import { Vehicle, FuelConsumptionData, FuelCurrentData, FuelStatsData, ApiError } from "@/lib/types";
 import Sidebar from "@/components/Sidebar";
 import { FuelEvent } from "@/components/RouteMap";
+import { fmtDateDisplay, fmtDateTime, toLocalMidnight } from "@/lib/dateUtils";
 
 const RouteMap = dynamic(() => import("@/components/RouteMap"), { ssr: false });
 
@@ -48,15 +49,8 @@ function getPresetRange(preset: Preset): { from: string; to: string } {
 const DAYS_SHORT = ["Su","Mo","Tu","We","Th","Fr","Sa"];
 const MONTHS_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-function toMidnight(iso: string) {
-  const d = new Date(iso);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-function fmtDisplay(iso: string) {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? "—"
-    : d.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
-}
+const toMidnight = (iso: string) => toLocalMidnight(iso);
+const fmtDisplay  = (iso: string) => fmtDateDisplay(iso);
 
 interface CalendarProps {
   from: string; to: string;
@@ -180,11 +174,7 @@ function InlineCalendar({ from, to, onFromChange, onToChange, onClose }: Calenda
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtTime(iso: string) {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? "—"
-    : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
-}
+const fmtTime = (iso: string) => fmtDateTime(iso);
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -263,7 +253,7 @@ export default function RoutesPage() {
         const c = cons.value;
         setConsumption(c);
         const events: FuelEvent[] = [
-          ...(c.drops   ?? []).map(d => ({ type: "drop"   as const, at: d.at, amount: d.consumed, fuelBefore: d.fuelBefore, fuelAfter: d.fuelAfter, unit: d.unit })),
+          ...(c.drops   ?? []).map(d => ({ type: "drop"   as const, at: d.at, amount: d.consumed, fuelBefore: d.fuelBefore, fuelAfter: d.fuelAfter, unit: d.unit, isConfirmedDrop: d.isConfirmedDrop })),
           ...(c.refuels ?? []).map(r => ({ type: "refuel" as const, at: r.at, amount: r.added,    fuelBefore: r.fuelBefore, fuelAfter: r.fuelAfter, unit: r.unit })),
         ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
         setFuelEvents(events);
@@ -277,22 +267,43 @@ export default function RoutesPage() {
     return () => { cancelled = true; };
   }, [token, selectedImei, range, handle401]);
 
-  const selectedVehicle = vehicles.find(v => v.imei === selectedImei);
-  const filteredEvents  = fuelEvents.filter(e =>
+  const selectedVehicle   = vehicles.find(v => v.imei === selectedImei);
+  const filteredEvents    = fuelEvents.filter(e =>
     activeFilter === "all" ? true : activeFilter === "drops" ? e.type === "drop" : e.type === "refuel"
   );
-  const drops         = fuelEvents.filter(e => e.type === "drop");
-  const refuels       = fuelEvents.filter(e => e.type === "refuel");
-  const totalDropped  = drops.reduce((s, e) => s + e.amount, 0);
-  const totalRefueled = refuels.reduce((s, e) => s + e.amount, 0);
-  const dropCount     = drops.length;
-  const refuelCount   = refuels.length;
+  const drops             = fuelEvents.filter(e => e.type === "drop");
+  const refuels           = fuelEvents.filter(e => e.type === "refuel");
+  // Confirmed drops: >= 8 L and fuel stayed low for 7 continuous minutes
+  const confirmedDrops    = drops.filter(e => e.isConfirmedDrop);
+  const dropCount         = drops.length;
+  const confirmedDropCount= confirmedDrops.length;
+  const refuelCount       = refuels.length;
+  const confirmedDropTotal= confirmedDrops.reduce((s, e) => s + e.amount, 0);
+
+  // Use backend's netDrop (firstFuel − lastFuel) as the authoritative "DROPPED" figure.
+  // Summing individual drop events inflates the number because noisy sensors
+  // produce many small oscillations — each downward tick > 0.5L gets counted
+  // as a drop, but the corresponding upward ticks are too small to be refuels.
+  // netDrop = actual net fuel decrease over the period, which is correct.
+  const totalDropped  = consumption?.netDrop != null && consumption.netDrop > 0
+    ? consumption.netDrop
+    : drops.reduce((s, e) => s + e.amount, 0);
+  const totalRefueled = consumption?.refueled ?? refuels.reduce((s, e) => s + e.amount, 0);
   const netChange     = totalRefueled - totalDropped;
 
-  // Fuel level estimation for the ring (same calc as in RouteMap)
-  const maxObserved = fuelEvents.reduce((m, e) => Math.max(m, e.fuelBefore, e.fuelAfter), 0);
-  const estCapacity = maxObserved > 0 ? maxObserved * 1.1 : 200;
-  const fuelPct     = currentFuel ? Math.min(100, (currentFuel.fuel / estCapacity) * 100) : null;
+  // Fuel level estimation for the ring (same calc as in RouteMap).
+  // Guard against NaN: fuelBefore/fuelAfter may be undefined; currentFuel.fuel
+  // can be undefined when no sensor data, making the division return NaN.
+  const maxObserved = fuelEvents.reduce(
+    (m, e) => Math.max(m, isFinite(e.fuelBefore) ? e.fuelBefore : 0, isFinite(e.fuelAfter) ? e.fuelAfter : 0),
+    0,
+  );
+  const estCapacity  = maxObserved > 0 ? maxObserved * 1.1 : 200;
+  const rawFuelLevel = currentFuel?.fuel;
+  const fuelPct      =
+    rawFuelLevel != null && isFinite(rawFuelLevel) && estCapacity > 0
+      ? Math.min(100, Math.max(0, (rawFuelLevel / estCapacity) * 100))
+      : null;
   const fuelColor   = fuelPct === null ? "#9CA3AF" : fuelPct > 60 ? "#22c55e" : fuelPct > 30 ? "#f59e0b" : "#ef4444";
 
   const PRESETS: { key: Preset; label: string }[] = [
@@ -399,8 +410,12 @@ export default function RoutesPage() {
                     <TrendingDown size={11} style={{ color: "#ef4444" }} />
                     <span style={{ fontSize: 9, fontWeight: 700, color: "#ef4444", textTransform: "uppercase", letterSpacing: "0.06em" }}>Dropped</span>
                   </div>
-                  <p style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E", lineHeight: 1 }}>{totalDropped.toFixed(1)}</p>
-                  <p style={{ fontSize: 9, color: "#9CA3AF", marginTop: 2 }}>litres this period</p>
+{/* <p style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E", lineHeight: 1 }}>{totalDropped.toFixed(1)}</p> */}
+                  <p style={{ fontSize: 20, color: "#9CA3AF", marginTop: 2 }}>
+                    {confirmedDropCount > 0
+                      ? <><span style={{ color: "#ef4444", fontWeight: 700 }}>{confirmedDropCount} alert{confirmedDropCount > 1 ? "s" : ""}</span> · {confirmedDropTotal.toFixed(1)} L</>
+                      : "No drops"}
+                  </p>
                 </div>
                 <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 12, padding: "10px 12px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 3 }}>
@@ -412,20 +427,7 @@ export default function RoutesPage() {
                 </div>
               </div>
 
-              {currentFuel && (
-                <div style={{ background: "rgba(232,64,64,0.05)", border: "1px solid rgba(232,64,64,0.15)", borderRadius: 12, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 10, background: "#E84040", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Fuel size={14} color="white" />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontSize: 9, color: "#9CA3AF" }}>Current fuel level</p>
-                    <p style={{ fontSize: 17, fontWeight: 800, color: "#E84040", lineHeight: 1 }}>{(currentFuel.fuel ?? 0).toFixed(1)} L</p>
-                  </div>
-                  <span style={{ fontSize: 9, fontWeight: 700, padding: "3px 8px", borderRadius: 20, background: currentFuel.speed > 0 ? "rgba(34,197,94,0.1)" : "#F5F4F4", color: currentFuel.speed > 0 ? "#16a34a" : "#9CA3AF" }}>
-                    {currentFuel.speed > 0 ? `${currentFuel.speed} km/h` : "Parked"}
-                  </span>
-                </div>
-              )}
+           
             </div>
 
             {/* Vehicle list */}
@@ -504,7 +506,7 @@ export default function RoutesPage() {
 
                 <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
                   {/* Fuel level */}
-                  {currentFuel && fuelPct !== null ? (
+                  {/* {currentFuel && fuelPct !== null ? (
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
                         <span style={{ fontSize: 9, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.06em" }}>Current Fuel</span>
@@ -525,7 +527,7 @@ export default function RoutesPage() {
                       <span style={{ fontSize: 12, fontWeight: 800, color: "#E84040" }}>{(currentFuel.fuel ?? 0).toFixed(1)} L</span>
                       <span style={{ fontSize: 9, color: "#9CA3AF" }}>current fuel</span>
                     </div>
-                  ) : null}
+                  ) : null} */}
 
                   {/* Speed / movement */}
                   {currentFuel && (
@@ -548,8 +550,12 @@ export default function RoutesPage() {
                           <TrendingDown size={9} style={{ color: "#ef4444" }} />
                           <span style={{ fontSize: 8, fontWeight: 700, color: "#ef4444", textTransform: "uppercase" }}>Drops</span>
                         </div>
-                        <p style={{ fontSize: 14, fontWeight: 800, color: "#1A1A2E" }}>{dropCount}</p>
-                        <p style={{ fontSize: 9, color: "#ef4444", fontWeight: 700 }}>−{totalDropped.toFixed(1)} L</p>
+                        {/* <p style={{ fontSize: 14, fontWeight: 800, color: "#1A1A2E" }}>{dropCount}</p> */}
+                        <p style={{ fontSize: 9, color: "#ef4444", fontWeight: 700 }}>
+                          {confirmedDropCount > 0
+                            ? <>{confirmedDropCount} confirmed</>
+                            : <>No drops</>}
+                        </p>
                       </div>
                       <div style={{ background: "#F0FDF4", borderRadius: 8, padding: "7px 8px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 3, marginBottom: 2 }}>
@@ -617,7 +623,7 @@ export default function RoutesPage() {
                 { color: "#22c55e", label: "Online vehicle" },
                 { color: "#6B7280", label: "Offline vehicle" },
                 { color: "#E84040", label: "Selected vehicle" },
-                { color: "#ef4444", label: "Fuel drop" },
+                { color: "#f97316", label: "Small drop / noise" },
                 { color: "#22c55e", label: "Refuel" },
               ].map(({ color, label }) => (
                 <div key={label} style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -672,27 +678,43 @@ export default function RoutesPage() {
                 <div style={{ position: "relative", padding: "0 14px" }}>
                   <div style={{ position: "absolute", left: 26, top: 0, bottom: 0, width: 2, background: "#F0EFEF" }} />
                   {filteredEvents.map((ev, i) => {
-                    const isDrop = ev.type === "drop";
-                    const color  = isDrop ? "#ef4444" : "#22c55e";
+                    const isDrop      = ev.type === "drop";
+                    const isAlert     = isDrop && ev.isConfirmedDrop; // >= 8 L, stayed low 7 min
+                    const isSmallDrop = isDrop && !ev.isConfirmedDrop;
+
+                    // Confirmed alert → vivid red; small drop → muted orange; refuel → green
+                    const dotBg    = isAlert ? "#dc2626" : isSmallDrop ? "#f97316" : "#22c55e";
+                    const cardBg   = isAlert ? "#FEF2F2" : isSmallDrop ? "#FFF7ED" : "#F0FDF4";
+                    const cardBdr  = isAlert ? "#FECACA" : isSmallDrop ? "#FED7AA" : "#BBF7D0";
+                    const labelClr = isAlert ? "#dc2626" : isSmallDrop ? "#ea580c" : "#22c55e";
+
                     return (
                       <div key={`${ev.at}-${i}`} style={{ display: "flex", gap: 10, marginBottom: 10, position: "relative" }}>
-                        <div style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0, background: color, border: "2.5px solid white", boxShadow: "0 2px 6px rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: "white", zIndex: 1 }}>
+                        <div style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0, background: dotBg, border: "2.5px solid white", boxShadow: `0 2px 6px ${dotBg}55`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: "white", zIndex: 1 }}>
                           {i + 1}
                         </div>
-                        <div style={{ flex: 1, background: isDrop ? "#FEF2F2" : "#F0FDF4", border: `1px solid ${isDrop ? "#FECACA" : "#BBF7D0"}`, borderRadius: 12, padding: "9px 11px" }}>
+                        <div style={{ flex: 1, background: cardBg, border: `1px solid ${cardBdr}`, borderRadius: 12, padding: "9px 11px", boxShadow: isAlert ? "0 2px 8px rgba(220,38,38,0.10)" : "none" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                              {isDrop ? <TrendingDown size={10} style={{ color }} /> : <TrendingUp size={10} style={{ color }} />}
-                              <span style={{ fontSize: 9, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: "0.05em" }}>{isDrop ? "Fuel Drop" : "Refuel"}</span>
+                              {isDrop ? <TrendingDown size={10} style={{ color: labelClr }} /> : <TrendingUp size={10} style={{ color: labelClr }} />}
+                              <span style={{ fontSize: 9, fontWeight: 700, color: labelClr, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                {isAlert ? "⚠ Fuel Drop Alert" : isSmallDrop ? "Fuel Drop" : "Refuel"}
+                              </span>
                             </div>
                             <span style={{ fontSize: 9, color: "#9CA3AF" }}>{fmtTime(ev.at)}</span>
                           </div>
                           <p style={{ fontSize: 15, fontWeight: 800, color: "#1A1A2E", lineHeight: 1.1 }}>
                             {isDrop ? "−" : "+"}{(ev.amount ?? 0).toFixed(1)} L
                           </p>
-                          <span style={{ fontSize: 10, color: "#9CA3AF" }}>
-                            {(ev.fuelBefore ?? 0).toFixed(1)} → {(ev.fuelAfter ?? 0).toFixed(1)} L
-                          </span>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
+                            <span style={{ fontSize: 10, color: "#9CA3AF" }}>
+                              {(ev.fuelBefore ?? 0).toFixed(1)} → {(ev.fuelAfter ?? 0).toFixed(1)} L
+                            </span>
+                          
+                            {isSmallDrop && (
+                              <span style={{ fontSize: 8, color: "#9CA3AF", fontStyle: "italic" }}>noise / consumption</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -709,16 +731,13 @@ export default function RoutesPage() {
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <div>
                       <p style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>Consumed</p>
-                      <p style={{ fontSize: 14, fontWeight: 800, color: "white" }}>{(consumption.consumed ?? 0).toFixed(1)} L</p>
+                      <p style={{ fontSize: 14, fontWeight: 800, color: "white" }}>{(totalDropped ?? 0).toFixed(1)} L</p>
                     </div>
                     <div>
                       <p style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>Refueled</p>
                       <p style={{ fontSize: 14, fontWeight: 800, color: "white" }}>+{(consumption.refueled ?? 0).toFixed(1)} L</p>
                     </div>
-                    <div>
-                      <p style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>Cost</p>
-                      <p style={{ fontSize: 14, fontWeight: 800, color: "white" }}>Rs {(consumption.estimatedCost ?? 0).toLocaleString()}</p>
-                    </div>
+                 
                   </div>
                 </div>
               </div>

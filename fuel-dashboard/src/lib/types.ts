@@ -85,6 +85,15 @@ export interface FuelDropDetail {
   fuelAfter: number;
   consumed: number;
   unit: string;
+  /** True when the single-reading drop exceeds 2 L — likely sensor glitch. */
+  isSensorJump?: boolean;
+  /**
+   * True when ALL conditions pass (mirrors Python is_fake_spike()):
+   *   1. consumed >= 8 L (DROP_ALERT_THRESHOLD)
+   *   2. Fuel did NOT recover within ±7 minutes (SPIKE_WINDOW_MINUTES)
+   * Only these events are shown as "Fuel Drop Alert" in the UI.
+   */
+  isConfirmedDrop?: boolean;
 }
 
 export interface FuelRefuelDetail {
@@ -109,6 +118,7 @@ export interface FuelConsumptionData {
   imei: string;
   from: string;
   to: string;
+  /** Cumulative consumption from small drops only (excludes sensor jumps). */
   consumed: number;
   refueled: number;
   estimatedCost: number;
@@ -121,6 +131,16 @@ export interface FuelConsumptionData {
   refuels?: FuelRefuelDetail[];
   /** Multi-tank: per-tank breakdown */
   tanks?: TankBreakdown[];
+  /** First valid fuel reading in the period (liters). */
+  firstFuel?: number | null;
+  /** Last valid fuel reading in the period (liters). */
+  lastFuel?: number | null;
+  /**
+   * Net fuel change = firstFuel − lastFuel.
+   * Positive = fuel was lost. This is the most reliable "total dropped"
+   * metric because it does NOT inflate from sensor oscillations.
+   */
+  netDrop?: number | null;
 }
 
 // ─── Fuel stats (NEW) ──────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ interface KpiSparklineCardProps {
   unit?: string;
   icon: IconComponent;
   color: string;
-  trend: { value: number; isPositive: boolean };
+  trend?: { value: number; isPositive: boolean };
   subtext?: string;
   alert?: boolean;
   highlight?: boolean;
@@ -60,18 +60,20 @@ function KpiSparklineCardComponent({
 
           {subtext && <p className="text-xs text-gray-500 mt-1">{subtext}</p>}
 
-          <div className="flex items-center gap-1.5 mt-2">
-            <div
-              className="flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-semibold"
-              style={{
-                background: trend.isPositive ? "rgba(34, 197, 94, 0.12)" : "rgba(239, 68, 68, 0.12)",
-                color: trend.isPositive ? "#16a34a" : "#dc2626",
-              }}
-            >
-              {trend.isPositive ? "↑" : "↓"} {trend.value.toFixed(1)}%
+          {trend && (
+            <div className="flex items-center gap-1.5 mt-2">
+              <div
+                className="flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-semibold"
+                style={{
+                  background: trend.isPositive ? "rgba(34, 197, 94, 0.12)" : "rgba(239, 68, 68, 0.12)",
+                  color: trend.isPositive ? "#16a34a" : "#dc2626",
+                }}
+              >
+                {trend.isPositive ? "↑" : "↓"} {trend.value.toFixed(1)}%
+              </div>
+              <span className="text-xs text-gray-400">vs last period</span>
             </div>
-            <span className="text-xs text-gray-400">vs last period</span>
-          </div>
+          )}
 
         </div>
 

@@ -5,6 +5,7 @@ import {
   ArrowDownCircle, ArrowUpCircle, Droplets, Route,
 } from "lucide-react";
 import { FuelStatsData } from "@/lib/types";
+import { fmtDateTime } from "@/lib/dateUtils";
 
 function StatSkeleton() {
   return (
@@ -26,11 +27,7 @@ function StatSkeleton() {
 interface Props { stats: FuelStatsData | null; loading: boolean; }
 
 function fmt(n: number | undefined, decimals = 1) { return (n ?? 0).toFixed(decimals); }
-function fmtDate(iso: string | undefined) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
+const fmtDate = (iso: string | undefined) => fmtDateTime(iso);
 
 export default function FuelStatsPanel({ stats, loading }: Props) {
   if (loading) return <StatSkeleton />;

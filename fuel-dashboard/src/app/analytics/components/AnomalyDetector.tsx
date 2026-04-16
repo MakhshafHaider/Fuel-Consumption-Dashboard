@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CheckCircle2,
 } from "lucide-react";
+import { fmtDateTime } from "@/lib/dateUtils";
 
 interface Anomaly {
   id: string;
@@ -120,7 +121,7 @@ function AnomalyDetectorComponent({
                     <div className="flex items-center gap-2">
                       <Clock className="w-3 h-3 text-gray-400" />
                       <span className="text-xs text-gray-400">
-                        {new Date(anomaly.timestamp).toLocaleString()}
+                        {fmtDateTime(anomaly.timestamp)}
                       </span>
                     </div>
                   </div>

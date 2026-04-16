@@ -22,16 +22,16 @@ interface VehicleData {
 
 interface EfficiencyBenchmarkProps {
   currentScore: number;
-  industryAverage: number;
-  topPerformers: number;
+  industryAverage?: number;
+  topPerformers?: number;
   fleetData: VehicleData[];
   detailed?: boolean;
 }
 
 function EfficiencyBenchmarkComponent({
   currentScore,
-  industryAverage,
-  topPerformers,
+  industryAverage = 65,
+  topPerformers = 85,
   fleetData,
   detailed = false,
 }: EfficiencyBenchmarkProps) {

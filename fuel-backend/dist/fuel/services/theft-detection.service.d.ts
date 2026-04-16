@@ -15,6 +15,7 @@ export interface ClassifiedDropEvent {
     lng: number;
     severity: 'low' | 'medium' | 'high';
     reason: string;
+    isConfirmedDrop: boolean;
 }
 export interface TheftDetectionResult {
     imei: string;

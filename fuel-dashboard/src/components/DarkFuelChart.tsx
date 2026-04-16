@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import { FuelBucket, FuelConsumptionData, ApiError } from "@/lib/types";
 import { ErrorState } from "./ErrorState";
+import { fmtAxisTick, fmtPeriodRange, fmtDateTime, fmtDateTimeFull } from "@/lib/dateUtils";
 import { ChevronLeft, ChevronRight, Plus, Minus, Fuel } from "lucide-react";
 
 // ── Skeleton ────────────────────────────────────────────────────────────────
@@ -52,13 +53,7 @@ interface Props {
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
-  const dt = new Date(label);
-  const formatted = isNaN(dt.getTime())
-    ? label
-    : dt.toLocaleString("en-US", {
-        month: "short", day: "numeric",
-        hour: "2-digit", minute: "2-digit", hour12: false,
-      });
+  const formatted = fmtDateTime(label);
 
   return (
     <div style={{
@@ -85,25 +80,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtAxisTick(v: string): string {
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return v;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-    + " " + d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-}
-
-function fmtPeriodRange(from?: string, to?: string): string {
-  if (!from && !to) return "";
-  const opts: Intl.DateTimeFormatOptions = { year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false };
-  const f = (s?: string) => {
-    if (!s) return "";
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? s : d.toLocaleString("en-US", opts);
-  };
-  return `${f(from)} – ${f(to)}`;
-}
+// (fmtAxisTick, fmtPeriodRange imported from dateUtils)
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -116,12 +93,7 @@ export default function DarkFuelChart({
 
   const lastBucket  = buckets.length ? buckets[buckets.length - 1] : null;
   const lastReading = lastBucket ? Number(lastBucket.fuel ?? 0).toFixed(2) : null;
-  const lastDt = lastBucket
-    ? new Date(lastBucket.dt).toLocaleString("en-US", {
-        year: "numeric", month: "2-digit", day: "2-digit",
-        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-      })
-    : null;
+  const lastDt = lastBucket ? fmtDateTimeFull(lastBucket.dt) : null;
 
   const maxFuel = buckets.length
     ? Math.ceil(Math.max(...buckets.map(b => Number(b.fuel ?? 0))) / 100) * 100 + 100
@@ -173,7 +145,15 @@ export default function DarkFuelChart({
                 <span style={{ fontWeight: 600, color: "#6B7280" }}>{sensorName ?? "Fuel1"}</span>
                 {consumption && (
                   <span style={{ marginLeft: 10 }}>
-                    · Consumed <span style={{ color: "#ef4444", fontWeight: 600 }}>{(consumption.consumed ?? 0).toFixed(1)} L</span>
+                    · Consumed{" "}
+                    <span style={{ color: "#ef4444", fontWeight: 600 }}>
+                      {consumption.netDrop != null
+                        ? consumption.netDrop.toFixed(1)
+                        : (consumption.consumed ?? 0).toFixed(1)} L
+                    </span>
+                    {consumption.netDrop != null && (
+                      <span style={{ fontSize: 10, color: "#9CA3AF", marginLeft: 3 }}>(net)</span>
+                    )}
                     {"  "}· Refueled <span style={{ color: "#22c55e", fontWeight: 600 }}>+{(consumption.refueled ?? 0).toFixed(1)} L</span>
                   </span>
                 )}

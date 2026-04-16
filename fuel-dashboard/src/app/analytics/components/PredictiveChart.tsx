@@ -12,6 +12,7 @@ import {
   ReferenceLine,
 } from "recharts";
 import { TrendingUp, Brain } from "lucide-react";
+import { fmtDateShort } from "@/lib/dateUtils";
 
 interface DataPoint {
   date: string;
@@ -154,7 +155,7 @@ function PredictiveChartComponent({
               tick={{ fill: "#9CA3AF", fontSize: 11 }}
               axisLine={{ stroke: "#f0f0f0" }}
               tickLine={false}
-              tickFormatter={(value) => new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              tickFormatter={(value) => fmtDateShort(value)}
             />
             <YAxis
               tick={{ fill: "#9CA3AF", fontSize: 11 }}

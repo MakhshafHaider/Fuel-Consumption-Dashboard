@@ -3,6 +3,7 @@
 import { memo } from "react";
 import { Fuel, MapPin, AlertTriangle, CheckCircle, Clock, Zap } from "lucide-react";
 import { FuelDrop } from "@/lib/types";
+import { fmtDateTime } from "@/lib/dateUtils";
 
 interface DropEventTableProps {
   drops: FuelDrop[];
@@ -122,7 +123,7 @@ function DropEventTableComponent({ drops, title = "Fuel Drop Events", onDropClic
                       <div className="flex items-center gap-2">
                         <Clock className="w-4 h-4 text-gray-400" />
                         <span className="text-sm text-gray-900">
-                          {new Date(drop.at).toLocaleString()}
+                          {fmtDateTime(drop.at)}
                         </span>
                       </div>
                     </td>

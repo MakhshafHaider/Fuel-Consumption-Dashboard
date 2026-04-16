@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { fmtDateDisplay, fmtDateTime } from "./dateUtils";
 import {
   ConsumptionReportData,
   RefuelReportData,
@@ -27,25 +28,8 @@ export interface ExportOptions {
   sheetName?: string;
 }
 
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime())
-    ? "—"
-    : d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-}
-
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime())
-    ? "—"
-    : d.toLocaleString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-}
+const formatDate     = (iso: string) => fmtDateDisplay(iso);
+const formatDateTime = (iso: string) => fmtDateTime(iso);
 
 function generateFilename(reportType: ReportType, from: string, to: string): string {
   const reportNames: Record<ReportType, string> = {

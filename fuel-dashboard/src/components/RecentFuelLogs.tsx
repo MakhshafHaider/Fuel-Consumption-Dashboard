@@ -2,6 +2,7 @@
 
 import { Droplets, Plus, Truck, Fuel } from "lucide-react";
 import { RefuelEvent, FuelCurrentData } from "@/lib/types";
+import { fmtDateTime } from "@/lib/dateUtils";
 
 function CardSkeleton() {
   return (
@@ -89,8 +90,7 @@ export default function RecentFuelLogs({ refuelEvents, currentFuel, loading }: P
           </div>
         ) : (
           refuelEvents.slice(0, 4).map((ev, i) => {
-            const dt    = new Date(ev.at);
-            const label = dt.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+            const label = fmtDateTime(ev.at);
             const color = EVENT_COLORS[i % EVENT_COLORS.length];
             return (
               <div key={i} className="list-row flex items-center gap-3">

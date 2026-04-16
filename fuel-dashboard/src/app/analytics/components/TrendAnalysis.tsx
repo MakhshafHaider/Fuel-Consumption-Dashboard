@@ -12,6 +12,7 @@ import {
   ReferenceLine,
 } from "recharts";
 import { LineChart, TrendingUp, Calendar } from "lucide-react";
+import { fmtDateShort } from "@/lib/dateUtils";
 
 interface DataPoint {
   date: string;
@@ -118,7 +119,7 @@ function TrendAnalysisComponent({
               axisLine={{ stroke: "#f0f0f0" }}
               tickLine={false}
               tickFormatter={(value) =>
-                new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+                fmtDateShort(value)
               }
             />
             <YAxis

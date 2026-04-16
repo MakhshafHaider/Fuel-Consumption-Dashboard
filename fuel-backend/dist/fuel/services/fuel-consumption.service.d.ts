@@ -14,6 +14,8 @@ export interface DropEvent {
     fuelAfter: number;
     consumed: number;
     unit: string;
+    isSensorJump?: boolean;
+    isConfirmedDrop?: boolean;
 }
 export interface ConsumptionResult {
     imei: string;
@@ -27,6 +29,9 @@ export interface ConsumptionResult {
     samples: number;
     refuels: RefuelEvent[];
     drops: DropEvent[];
+    firstFuel: number | null;
+    lastFuel: number | null;
+    netDrop: number | null;
 }
 export interface FcrConfig {
     source?: string;

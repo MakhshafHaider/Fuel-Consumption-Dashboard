@@ -5,6 +5,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Vehicle, FuelCurrentData } from "@/lib/types";
+import { fmtDateTime } from "@/lib/dateUtils";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,8 @@ export interface FuelEvent {
   unit: string;
   lat?: number;
   lng?: number;
+  /** True when this drop is >= 8 L AND fuel stayed low for 7 min (Python is_fake_spike check). */
+  isConfirmedDrop?: boolean;
 }
 
 interface Props {
@@ -88,7 +91,7 @@ function makeTruckIcon(
       ${dropCount > 99 ? "99+" : dropCount}
     </div>` : "";
 
-  const fuelBadge = fuelPct !== undefined ? `
+  const fuelBadge = fuelPct !== undefined && isFinite(fuelPct) ? `
     <div style="
       margin-top:2px;font-size:8px;font-weight:800;color:${ringColor};
       background:white;border:1px solid ${ringColor};padding:1px 5px;
@@ -178,11 +181,7 @@ function PanToSelected({ imei, vehicles }: { imei: string; vehicles: Vehicle[] }
 
 // ── Popup helpers ─────────────────────────────────────────────────────────────
 
-function fmtTime(iso: string) {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? "—"
-    : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
-}
+const fmtTime = (iso: string) => fmtDateTime(iso);
 
 // ── Fuel events list (shown in popup when events have no GPS coords) ──────────
 
@@ -228,12 +227,19 @@ export default function RouteMap({
 
   const selected = vehicles.find(v => v.imei === selectedImei);
 
-  // Estimate fuel % from current fuel vs max observed fuelBefore in events
-  const maxObserved = fuelEvents.reduce((m, e) => Math.max(m, e.fuelBefore, e.fuelAfter), 0);
-  const estimatedCapacity = maxObserved > 0 ? maxObserved * 1.1 : 200; // 10% headroom
-  const fuelPct = currentFuel
-    ? Math.min(100, (currentFuel.fuel / estimatedCapacity) * 100)
-    : undefined;
+  // Estimate fuel % from current fuel vs max observed fuelBefore in events.
+  // Guard against NaN: Math.max with NaN args returns NaN; currentFuel.fuel
+  // can be undefined/null when no sensor data, making the division produce NaN.
+  const maxObserved = fuelEvents.reduce(
+    (m, e) => Math.max(m, isFinite(e.fuelBefore) ? e.fuelBefore : 0, isFinite(e.fuelAfter) ? e.fuelAfter : 0),
+    0,
+  );
+  const estimatedCapacity = maxObserved > 0 ? maxObserved * 1.1 : 200;
+  const rawFuel = currentFuel?.fuel;
+  const fuelPct =
+    rawFuel != null && isFinite(rawFuel) && estimatedCapacity > 0
+      ? Math.min(100, Math.max(0, (rawFuel / estimatedCapacity) * 100))
+      : undefined;
 
   // GPS-tagged events only (for polyline)
   const gpsEvents = fuelEvents.filter(e => e.lat != null && e.lng != null);

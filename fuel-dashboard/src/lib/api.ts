@@ -26,7 +26,7 @@ import {
   VehiclesResponse,
 } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3007";
 
 // ─── Core fetch ────────────────────────────────────────────────────────────
 
@@ -128,9 +128,13 @@ export async function getFuelHistory(
   imei: string,
   from: string,
   to: string,
-  interval: Interval = "day"
+  interval: Interval = "day",
+  tz?: string
 ): Promise<FuelHistoryData> {
-  const p = new URLSearchParams({ from, to, interval });
+  const resolvedTz = tz ?? (typeof Intl !== "undefined"
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : "Asia/Karachi");
+  const p = new URLSearchParams({ from, to, interval, tz: resolvedTz });
   return request<FuelHistoryData>(`/vehicles/${imei}/fuel/history?${p}`, {}, token);
 }
 
@@ -200,6 +204,13 @@ export function defaultRange() {
   const to   = new Date();
   const from = new Date();
   from.setDate(from.getDate() - 30);
+  return toISORange(from, to);
+}
+
+export function todayRange() {
+  const to   = new Date();
+  const from = new Date();
+  from.setHours(0, 0, 0, 0);
   return toISORange(from, to);
 }
 
