@@ -371,16 +371,24 @@ export default function RoutesPage() {
   const refuelCount       = refuels.length;
   const confirmedDropTotal= confirmedDrops.reduce((s, e) => s + e.amount, 0);
 
-  // Use backend's netDrop (firstFuel − lastFuel) as the authoritative "DROPPED" figure.
-  // Summing individual drop events inflates the number because noisy sensors
-  // produce many small oscillations — each downward tick > 0.5L gets counted
-  // as a drop, but the corresponding upward ticks are too small to be refuels.
-  // netDrop = actual net fuel decrease over the period, which is correct.
-  const totalDropped  = consumption?.netDrop != null && consumption.netDrop > 0
-    ? consumption.netDrop
-    : drops.reduce((s, e) => s + e.amount, 0);
+  // Calculate actual fuel consumption correctly accounting for refuels.
+  // Formula: Consumption = (firstFuel + totalRefueled) - lastFuel
+  // This gives the true fuel burned: start level + what was added - what's left now
   const totalRefueled = consumption?.refueled ?? refuels.reduce((s, e) => s + e.amount, 0);
-  const netChange     = totalRefueled - totalDropped;
+  const firstFuel = consumption?.firstFuel ?? null;
+  const lastFuel = consumption?.lastFuel ?? null;
+
+  let totalDropped: number;
+  if (firstFuel != null && lastFuel != null) {
+    // Accurate calculation: (start + refueled) - current = actual consumption
+    totalDropped = firstFuel + totalRefueled - lastFuel;
+    // Ensure it's never negative (can happen with data errors)
+    if (totalDropped < 0) totalDropped = 0;
+  } else {
+    // Fallback to confirmed drops only if we don't have proper readings
+    totalDropped = confirmedDrops.reduce((s, e) => s + e.amount, 0);
+  }
+  const netChange = totalRefueled - totalDropped;
 
   // Fuel level estimation for the ring (same calc as in RouteMap).
   // Guard against NaN: fuelBefore/fuelAfter may be undefined; currentFuel.fuel
