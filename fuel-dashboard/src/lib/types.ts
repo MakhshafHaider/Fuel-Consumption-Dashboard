@@ -104,6 +104,16 @@ export interface FuelRefuelDetail {
   unit: string;
 }
 
+// ─── Python-confirmed drop alerts (from fuel_drop_alerts table) ────────────
+
+export interface PythonDropAlertsData {
+  imei: string;
+  from: string;
+  to: string;
+  count: number;
+  drops: FuelDropDetail[];
+}
+
 // ─── Fuel consumption (updated: now includes drops[] + refuels[] + tanks[]) ─
 
 export interface TankBreakdown {
@@ -628,4 +638,110 @@ export class ApiError extends Error {
       default:  return "Something went wrong. Please try again.";
     }
   }
+}
+
+// ─── Fuel Detection Engine Types ─────────────────────────────────────────────
+
+/**
+ * Fuel reading for detection engine
+ */
+export interface FuelReading {
+  timestamp: Date;
+  fuel: number;
+  speed: number;
+  ignitionOn?: boolean;
+  movementBit?: number;
+  lat?: number;
+  lng?: number;
+}
+
+/**
+ * Detection alert types
+ */
+export type DetectionAlertType = "drop" | "rise" | "low_fuel";
+
+/**
+ * Detection alert severity
+ */
+export type DetectionAlertSeverity = "low" | "medium" | "high" | "critical";
+
+/**
+ * Detection alert - mirrors Python alert structure
+ */
+export interface DetectionAlert {
+  id: string;
+  type: DetectionAlertType;
+  imei: string;
+  param?: string;
+  fuelBefore: number;
+  fuelAfter: number;
+  amount: number;
+  timestamp: Date;
+  location?: { lat: number; lng: number };
+  speed: number;
+  ignitionOn: boolean;
+  severity: DetectionAlertSeverity;
+  reason: string;
+  isConfirmed: boolean;
+  verifiedAt?: Date;
+}
+
+/**
+ * Drop detection result
+ */
+export interface DropDetectionResult {
+  isDrop: boolean;
+  dropAmount: number;
+  fuelBefore: number;
+  fuelAfter: number;
+  isFakeSpike: boolean;
+  isConfirmed: boolean;
+  reason: string;
+  severity: DetectionAlertSeverity;
+}
+
+/**
+ * Rise detection result
+ */
+export interface RiseDetectionResult {
+  isRise: boolean;
+  riseAmount: number;
+  fuelBefore: number;
+  fuelAfter: number;
+  isFakeSpike: boolean;
+  isConfirmed: boolean;
+  reason: string;
+}
+
+/**
+ * Fuel detection state for UI
+ */
+export interface FuelDetectionState {
+  alerts: DetectionAlert[];
+  pendingAlerts: DetectionAlert[];
+  theftAlerts: DetectionAlert[];
+  refuelAlerts: DetectionAlert[];
+  lowFuelAlerts: DetectionAlert[];
+  currentLevels: Map<string, { fuel: number; timestamp: Date; speed: number }>;
+  detectorStates: Map<string, {
+    lastFuel: number | null;
+    lastReadingTime: Date | null;
+    baselineFuel: number | null;
+    historyCount: number;
+    lastAlert: DetectionAlert | null;
+  }>;
+}
+
+/**
+ * History analysis result
+ */
+export interface HistoryAnalysisResult {
+  drops: FuelDropDetail[];
+  refuels: FuelRefuelDetail[];
+  theftEvents: FuelDropDetail[];
+  netDrop: number | null;
+  totalConsumed: number;
+  totalRefueled: number;
+  confirmedDropCount: number;
+  theftCount: number;
 }

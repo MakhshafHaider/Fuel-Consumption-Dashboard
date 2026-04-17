@@ -117,8 +117,8 @@ let TheftDetectionService = TheftDetectionService_1 = class TheftDetectionServic
                     }
                     const totalConsumed = baselineFuel - verifiedFuel;
                     const verifyPassed = (0, fuel_drop_filter_util_1.isDropConfirmedAfterDelay)(curr.ts, baselineFuel, filtered);
-                    const fake = !verifyPassed || (0, fuel_drop_filter_util_1.isFakeSpike)(baselineTs, filtered, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES, fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD);
-                    const postRecovery = !fake && (0, fuel_drop_filter_util_1.isPostDropRecovery)(baselineTs, baselineFuel, filtered, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES);
+                    const fake = !verifyPassed || (0, fuel_drop_filter_util_1.isFakeSpike)(curr.ts, filtered, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES, fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD);
+                    const postRecovery = !fake && (0, fuel_drop_filter_util_1.isPostDropRecovery)(curr.ts, baselineFuel, filtered, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES);
                     const isConfirmedDrop = totalConsumed >= fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD && !fake && !postRecovery;
                     const durationMs = curr.ts.getTime() - prev.ts.getTime();
                     const durationMinutes = Math.max(1, Math.round(durationMs / (1000 * 60)));

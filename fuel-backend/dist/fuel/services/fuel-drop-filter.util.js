@@ -22,12 +22,10 @@ exports.POST_REFUEL_VERIFY_EPS_LITERS = 3.5;
 function applyMedianFilter(readings, windowSize = exports.FUEL_MEDIAN_SAMPLES) {
     if (windowSize < 2 || readings.length === 0)
         return readings;
-    const half = Math.floor(windowSize / 2);
     return readings.map((r, i) => {
-        const start = Math.max(0, i - half);
-        const end = Math.min(readings.length, i + half + 1);
+        const start = Math.max(0, i - windowSize + 1);
         const window = readings
-            .slice(start, end)
+            .slice(start, i + 1)
             .map((x) => x.fuel)
             .sort((a, b) => a - b);
         const median = window[Math.floor(window.length / 2)];

@@ -239,14 +239,20 @@ export class TheftDetectionService {
           );
 
           // ── Layer 3: is_fake_spike (includes speed veto) ───────────────
-          // Mirrors Python is_fake_spike(±SPIKE_WINDOW_MINUTES) — now also
-          // applies movement veto: if any post-event reading has speed
-          // > DROP_GATING_MAX_SPEED_KMH, treat as driving consumption noise.
-          const fake = !verifyPassed || isFakeSpike(baselineTs, filtered, SPIKE_WINDOW_MINUTES, DROP_ALERT_THRESHOLD);
+          // Mirrors Python is_fake_spike(±SPIKE_WINDOW_MINUTES) which is
+          // called with dt_tracker = the DROP timestamp (the LOW reading),
+          // NOT the baseline timestamp. Centering the window on curr.ts
+          // ensures the speed veto only applies to readings AFTER the drop,
+          // exactly matching Python. Using baselineTs here caused pre-drop
+          // driving speed to be wrongly treated as post-drop movement.
+          const fake = !verifyPassed || isFakeSpike(curr.ts, filtered, SPIKE_WINDOW_MINUTES, DROP_ALERT_THRESHOLD);
 
           // ── Layer 4: Post-drop verify ──────────────────────────────────
+          // Python anchors its post-drop verify timer to dt_tracker (the
+          // drop time = curr.ts). Use curr.ts so the [+7min, +14min] window
+          // covers the actual post-drop period, not the post-baseline period.
           const postRecovery = !fake && isPostDropRecovery(
-            baselineTs, baselineFuel, filtered,
+            curr.ts, baselineFuel, filtered,
             SPIKE_WINDOW_MINUTES,
           );
 

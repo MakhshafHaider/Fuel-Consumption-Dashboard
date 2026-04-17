@@ -99,14 +99,19 @@ export interface FuelReading {
 // ─── Layer 1: Median Filter ───────────────────────────────────────────────────
 
 /**
- * Mirrors Python _filter_fuel_for_alarms() / FUEL_MEDIAN_SAMPLES = 5.
+ * Mirrors Python _filter_fuel_for_alarms() — CAUSAL (backward-only) median filter.
  *
- * Applies a sliding-window median filter over the given fuel readings.
- * Each output reading's fuel value is the median of the surrounding
- * `windowSize` samples (centred, clamped at edges).
+ * Python uses a deque(maxlen=n) that only keeps the N most recent samples,
+ * i.e. a backward-looking window.  This is a CAUSAL filter: each output
+ * sample is the median of the current reading and the (n-1) readings before
+ * it — future readings are NOT included.
  *
- * All other fields (ts, speed, …) are preserved unchanged from the
- * original reading — only the fuel value is smoothed.
+ * This directly mirrors Python's behaviour:
+ *   dq.append((dt_tracker, fv))  ← causal: only past samples
+ *   vals = [v for (_t, v) in dq if v is not None]
+ *   return median(vals)
+ *
+ * All other fields (ts, speed, …) are preserved from the original reading.
  */
 export function applyMedianFilter(
   readings: FuelReading[],
@@ -114,17 +119,14 @@ export function applyMedianFilter(
 ): FuelReading[] {
   if (windowSize < 2 || readings.length === 0) return readings;
 
-  const half = Math.floor(windowSize / 2);
-
   return readings.map((r, i) => {
-    const start = Math.max(0, i - half);
-    const end   = Math.min(readings.length, i + half + 1);
+    // Backward-only window: [i - windowSize + 1 … i]
+    const start  = Math.max(0, i - windowSize + 1);
     const window = readings
-      .slice(start, end)
+      .slice(start, i + 1)
       .map((x) => x.fuel)
       .sort((a, b) => a - b);
     const median = window[Math.floor(window.length / 2)];
-    // Spread all original fields (ts, speed, …) and override only fuel.
     return { ...r, fuel: median };
   });
 }

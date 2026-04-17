@@ -10,8 +10,8 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { getVehicles, getFuelConsumption, getCurrentFuel, getFuelStats } from "@/lib/api";
-import { Vehicle, FuelConsumptionData, FuelCurrentData, FuelStatsData, ApiError } from "@/lib/types";
+import { getVehicles, getFuelConsumption, getCurrentFuel, getFuelStats, getFuelDropAlerts } from "@/lib/api";
+import { Vehicle, FuelConsumptionData, FuelCurrentData, FuelStatsData, ApiError, FuelDropDetail } from "@/lib/types";
 import Sidebar from "@/components/Sidebar";
 import { FuelEvent } from "@/components/RouteMap";
 import { fmtDateDisplay, fmtDateTime, toLocalMidnight } from "@/lib/dateUtils";
@@ -195,6 +195,7 @@ export default function RoutesPage() {
   const [consumption,     setConsumption]     = useState<FuelConsumptionData | null>(null);
   const [fuelStats,       setFuelStats]       = useState<FuelStatsData | null>(null);
   const [fuelEvents,      setFuelEvents]      = useState<FuelEvent[]>([]);
+  const [pythonDrops,     setPythonDrops]     = useState<FuelDropDetail[]>([]);
   const [loading,         setLoading]         = useState(false);
   const [loadingVehicles, setLoadingVehicles] = useState(false);
   const [error,           setError]           = useState<string | null>(null);
@@ -240,27 +241,64 @@ export default function RoutesPage() {
     setConsumption(null);
     setFuelStats(null);
     setFuelEvents([]);
+    setPythonDrops([]);
 
     Promise.allSettled([
       getCurrentFuel(token, selectedImei),
       getFuelConsumption(token, selectedImei, range.from, range.to),
       getFuelStats(token, selectedImei, range.from, range.to),
-    ]).then(([cur, cons, stats]) => {
+      getFuelDropAlerts(token, selectedImei, range.from, range.to),
+    ]).then(([cur, cons, stats, pyDrops]) => {
       if (cancelled) return;
       if (cur.status   === "fulfilled") setCurrentFuel(cur.value);
       if (stats.status === "fulfilled") setFuelStats(stats.value);
+
+      // Python-confirmed drops from fuel_drop_alerts table (ground truth)
+      const confirmedDrops: FuelDropDetail[] = pyDrops.status === "fulfilled"
+        ? pyDrops.value.drops
+        : [];
+      setPythonDrops(confirmedDrops);
+
       if (cons.status === "fulfilled") {
         const c = cons.value;
         setConsumption(c);
+
+        // Merge: python confirmed drops (isConfirmedDrop:true) + refuels from consumption
+        // Python drops take priority — they come directly from the monitoring script
+        // that reads gs_objects (live sensor state), not gs_object_data (historical).
+        const confirmedDropEvents: FuelEvent[] = confirmedDrops.map(d => ({
+          type: "drop" as const,
+          at: d.at,
+          amount: d.consumed,
+          fuelBefore: d.fuelBefore,
+          fuelAfter: d.fuelAfter,
+          unit: d.unit,
+          isConfirmedDrop: true,
+        }));
+
         const events: FuelEvent[] = [
-          ...(c.drops   ?? []).map(d => ({ type: "drop"   as const, at: d.at, amount: d.consumed, fuelBefore: d.fuelBefore, fuelAfter: d.fuelAfter, unit: d.unit, isConfirmedDrop: d.isConfirmedDrop })),
-          ...(c.refuels ?? []).map(r => ({ type: "refuel" as const, at: r.at, amount: r.added,    fuelBefore: r.fuelBefore, fuelAfter: r.fuelAfter, unit: r.unit })),
+          ...confirmedDropEvents,
+          ...(c.refuels ?? []).map(r => ({ type: "refuel" as const, at: r.at, amount: r.added, fuelBefore: r.fuelBefore, fuelAfter: r.fuelAfter, unit: r.unit })),
         ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
         setFuelEvents(events);
       } else if (cons.status === "rejected") {
         const e = cons.reason;
         if (e instanceof ApiError && e.statusCode === 401) handle401();
         else setError(e instanceof ApiError ? e.userMessage : "Failed to load fuel data.");
+
+        // Even if consumption failed, still show python drops
+        if (confirmedDrops.length > 0) {
+          const events: FuelEvent[] = confirmedDrops.map(d => ({
+            type: "drop" as const,
+            at: d.at,
+            amount: d.consumed,
+            fuelBefore: d.fuelBefore,
+            fuelAfter: d.fuelAfter,
+            unit: d.unit,
+            isConfirmedDrop: true,
+          })).sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+          setFuelEvents(events);
+        }
       }
     }).finally(() => { if (!cancelled) setLoading(false); });
 
@@ -268,9 +306,11 @@ export default function RoutesPage() {
   }, [token, selectedImei, range, handle401]);
 
   const selectedVehicle   = vehicles.find(v => v.imei === selectedImei);
-  const filteredEvents    = fuelEvents.filter(e =>
-    activeFilter === "all" ? true : activeFilter === "drops" ? e.type === "drop" : e.type === "refuel"
-  );
+  const filteredEvents    = fuelEvents.filter(e => {
+    // Never show noise / normal-consumption drops — only confirmed drop alerts
+    if (e.type === "drop" && !e.isConfirmedDrop) return false;
+    return activeFilter === "all" ? true : activeFilter === "drops" ? e.type === "drop" : e.type === "refuel";
+  });
   const drops             = fuelEvents.filter(e => e.type === "drop");
   const refuels           = fuelEvents.filter(e => e.type === "refuel");
   // Confirmed drops: >= 8 L and fuel stayed low for 7 continuous minutes

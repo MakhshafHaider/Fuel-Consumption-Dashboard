@@ -222,6 +222,31 @@ export class FuelController {
       ? Math.round(tankResults.reduce((s, r) => s + (r.estimatedCost ?? 0), 0) * 100) / 100
       : null;
 
+    // Merge and de-duplicate drops/refuels across all tanks.
+    // Events from different sensors at the same timestamp are collapsed
+    // so the same physical fuel change is not double-counted.
+    const allDropsSeen = new Set<string>();
+    const mergedDrops = tankResults
+      .flatMap((r) => r.drops)
+      .filter((d) => {
+        const key = `${d.at}:${d.consumed}`;
+        if (allDropsSeen.has(key)) return false;
+        allDropsSeen.add(key);
+        return true;
+      })
+      .sort((a, b) => a.at.localeCompare(b.at));
+
+    const allRefuelsSeen = new Set<string>();
+    const mergedRefuels = tankResults
+      .flatMap((r) => r.refuels)
+      .filter((r) => {
+        const key = `${r.at}:${r.added}`;
+        if (allRefuelsSeen.has(key)) return false;
+        allRefuelsSeen.add(key);
+        return true;
+      })
+      .sort((a, b) => a.at.localeCompare(b.at));
+
     return {
       success: true,
       message: 'Fuel consumption calculated (multi-tank)',
@@ -235,6 +260,8 @@ export class FuelController {
         unit: sensors[0].units || 'L',
         refuelEvents: tankResults.reduce((s, r) => s + r.refuelEvents, 0),
         samples: tankResults.reduce((s, r) => s + r.samples, 0),
+        drops: mergedDrops,
+        refuels: mergedRefuels,
         tanks: tankResults.map((r, i) => ({
           sensorId: sensors[i].sensorId,
           sensorName: sensors[i].name,
@@ -402,6 +429,35 @@ export class FuelController {
       success: true,
       message: 'Fuel stats calculated',
       data: result,
+    };
+  }
+
+  /**
+   * GET /vehicles/:imei/fuel/drop-alerts?from=&to=
+   * Returns confirmed fuel drop alerts written by the Python monitoring script.
+   * These are the ground-truth alerts (same source as the email alerts).
+   */
+  @Get('drop-alerts')
+  async getDropAlerts(
+    @Param('imei') imei: string,
+    @Query() query: FuelConsumptionDto,
+  ) {
+    this.logger.log(
+      `GET /vehicles/${imei}/fuel/drop-alerts from=${query.from} to=${query.to}`,
+    );
+    const { from, to } = this.parseDateRange(query.from, query.to);
+    const unit = 'Liters';
+    const alerts = await this.consumptionService.getPythonAlerts(imei, from, to, unit);
+    return {
+      success: true,
+      message: `${alerts.length} confirmed drop alert(s) found`,
+      data: {
+        imei,
+        from: from.toISOString(),
+        to: to.toISOString(),
+        count: alerts.length,
+        drops: alerts,
+      },
     };
   }
 

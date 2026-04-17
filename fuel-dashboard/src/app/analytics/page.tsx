@@ -20,6 +20,8 @@ import {
   AlertCircle,
   Gauge,
   PiggyBank,
+  Shield,
+  Fuel,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import Sidebar from "@/components/Sidebar";
@@ -35,6 +37,10 @@ import {
   IdleWasteReportData,
   HighSpeedWasteReportData,
   VehicleStatusReportData,
+  TheftReportData,
+  FleetTheftReportData,
+  FuelHistoryData,
+  FuelBucket,
 } from "@/lib/types";
 import {
   getVehicles,
@@ -45,7 +51,19 @@ import {
   getIdleWasteReport,
   getHighSpeedWasteReport,
   getVehicleStatusReport,
+  getFleetTheftReport,
+  getFuelHistory,
+  getFuelDropAlerts,
 } from "@/lib/api";
+import { FuelDropDetail } from "@/lib/types";
+import { useFuelDetection, HistoryAnalysisResult } from "@/hooks/useFuelDetection";
+import {
+  detectDropsFromHistory,
+  detectRefuelsFromHistory,
+  filterTheftEvents,
+  calculateNetDrop,
+  DROP_THRESHOLD,
+} from "@/lib/fuelDetection";
 import {
   PredictiveChart,
   CostProjectionCard,
@@ -59,7 +77,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AnalyticsTab = "overview" | "cost" | "efficiency" ;
+type AnalyticsTab = "overview" | "cost" | "efficiency" | "theft";
 
 interface TabConfig {
   id: AnalyticsTab;
@@ -74,6 +92,7 @@ const TAB_CONFIG: TabConfig[] = [
   { id: "overview", label: "Overview", icon: BarChart3, description: "Fleet performance summary" },
   { id: "cost", label: "Cost Analysis", icon: PiggyBank, description: "Financial insights & projections" },
   { id: "efficiency", label: "Efficiency", icon: Gauge, description: "Benchmarking & scoring" },
+  { id: "theft", label: "Fuel Theft Detection", icon: Shield, description: "Real-time drop & theft monitoring" },
 ];
 
 // ─── Utility Functions ────────────────────────────────────────────────────────
@@ -128,12 +147,35 @@ function AnalyticsPage() {
   const [idleWasteData, setIdleWasteData] = useState<IdleWasteReportData | null>(null);
   const [highSpeedData, setHighSpeedData] = useState<HighSpeedWasteReportData | null>(null);
   const [vehicleStatusData, setVehicleStatusData] = useState<VehicleStatusReportData | null>(null);
+  const [fleetTheftData, setFleetTheftData] = useState<FleetTheftReportData | null>(null);
+  const [fuelHistoryCache, setFuelHistoryCache] = useState<Map<string, FuelHistoryData>>(new Map());
+  const [detectionResults, setDetectionResults] = useState<Map<string, HistoryAnalysisResult>>(new Map());
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [theftLoading, setTheftLoading] = useState(false);
+  // Python-confirmed drop alerts from fuel_drop_alerts table (keyed by imei)
+  const [pythonAlertsMap, setPythonAlertsMap] = useState<Map<string, FuelDropDetail[]>>(new Map());
 
   const handle401 = useCallback(() => { logout(); router.replace("/login"); }, [logout, router]);
+
+  // ─── Fuel Detection Hook ──────────────────────────────────────────────────────
+  const {
+    state: detectionState,
+    hasCriticalAlerts,
+    totalFuelLost,
+    getVehicleAlerts,
+    processHistory,
+  } = useFuelDetection({
+    imeis: vehicles.map((v) => v.imei),
+    params: ["fuel1", "io327"],
+    pollInterval: 60000, // 1 minute polling
+    enableVerification: true,
+    onAlertConfirmed: (alert) => {
+      console.log("[Analytics] Fuel alert confirmed:", alert);
+    },
+  });
 
   // ─── Derived Analytics Data ───────────────────────────────────────────────────
   const analyticsData = useMemo(() => {
@@ -162,6 +204,17 @@ function AnalyticsPage() {
     const highSpeedCost = highSpeedWaste * 1.5;
     const potentialSavings = idleCost + highSpeedCost * 0.5;
 
+    // Theft detection calculations - ONLY count confirmed alerts (theft events)
+    const confirmedTheftEvents = Array.from(detectionResults.values()).reduce(
+      (sum, r) => sum + r.drops.filter((d) => d.isConfirmedDrop).length, 0
+    );
+    const theftFuelLost = Array.from(detectionResults.values()).reduce(
+      (sum, r) => sum + r.drops.filter((d) => d.isConfirmedDrop).reduce((s, d) => s + d.consumed, 0), 0
+    );
+    const fleetRiskScore = confirmedTheftEvents > 0
+      ? Math.min(100, 30 + confirmedTheftEvents * 15)
+      : 0;
+
     return {
       totalVehicles,
       onlineVehicles,
@@ -178,8 +231,11 @@ function AnalyticsPage() {
       idleCost,
       highSpeedCost,
       potentialSavings,
+      confirmedTheftEvents,
+      theftFuelLost,
+      fleetRiskScore,
     };
-  }, [vehicles, consumptionData, thriftData, fleetRankingData, idleWasteData, highSpeedData]);
+  }, [vehicles, consumptionData, thriftData, fleetRankingData, idleWasteData, highSpeedData, detectionResults]);
 
   // ─── Load Data ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -220,6 +276,77 @@ function AnalyticsPage() {
     loadData();
   }, [token, range.from, range.to, handle401]);
 
+  // ─── Load Fuel History & Run Detection ───────────────────────────────────────
+  useEffect(() => {
+    if (!token || vehicles.length === 0) return;
+
+    const loadFuelHistoryAndDetect = async () => {
+      setTheftLoading(true);
+      try {
+        const vehiclesToAnalyze = vehicles.slice(0, 5);
+
+        // Load fuel history and Python alerts in parallel
+        const historyPromises = vehiclesToAnalyze.map((v) =>
+          getFuelHistory(token, v.imei, range.from, range.to, "5min").catch(() => null)
+        );
+        const pythonAlertPromises = vehiclesToAnalyze.map((v) =>
+          getFuelDropAlerts(token, v.imei, range.from, range.to).catch(() => null)
+        );
+
+        const [histories, pyAlertResults] = await Promise.all([
+          Promise.all(historyPromises),
+          Promise.all(pythonAlertPromises),
+        ]);
+
+        // Store Python alerts per IMEI (ground truth from monitoring script)
+        const newPythonMap = new Map<string, FuelDropDetail[]>();
+        pyAlertResults.forEach((result, index) => {
+          if (result && result.drops.length > 0) {
+            newPythonMap.set(vehiclesToAnalyze[index].imei, result.drops);
+          }
+        });
+        setPythonAlertsMap(newPythonMap);
+
+        const newCache = new Map<string, FuelHistoryData>();
+        const newResults = new Map<string, HistoryAnalysisResult>();
+
+        histories.forEach((history, index) => {
+          const imei = vehiclesToAnalyze[index].imei;
+
+          // Always add an entry to detectionResults so the vehicle shows up
+          // even without history — Python alerts will be shown regardless.
+          if (history && history.buckets.length > 0) {
+            newCache.set(imei, history);
+            const result = processHistory(imei, history.buckets);
+            newResults.set(imei, result);
+          } else {
+            // No history, but vehicle still needs a placeholder entry so it shows
+            // in the vehicle list (Python alerts will be shown independently).
+            newResults.set(imei, {
+              drops: [],
+              refuels: [],
+              theftEvents: [],
+              theftCount: 0,
+              confirmedDropCount: 0,
+              totalConsumed: 0,
+              totalRefueled: 0,
+              netDrop: null,
+            });
+          }
+        });
+
+        setFuelHistoryCache(newCache);
+        setDetectionResults(newResults);
+      } catch (e) {
+        console.error("[Analytics] Failed to load fuel history:", e);
+      } finally {
+        setTheftLoading(false);
+      }
+    };
+
+    loadFuelHistoryAndDetect();
+  }, [token, vehicles, range.from, range.to, processHistory]);
+
   // ─── Real Data from APIs ──────────────────────────────────────────────────────
   const timeSeriesData = useMemo(() => {
     const consumptionData = formatTrendData(dailyTrendData);
@@ -244,6 +371,7 @@ function AnalyticsPage() {
     }
 
     const hasTrendData = timeSeriesData.consumption.length > 0;
+    const hasTheftData = analyticsData.confirmedTheftEvents > 0;
 
     return (
       <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4">
@@ -280,12 +408,13 @@ function AnalyticsPage() {
           trend={calculateTrend(analyticsData.fleetAvgScore, analyticsData.fleetAvgScore - 5)}
         />
         <KpiSparklineCard
-          title="Idle Waste"
-          value={formatNumber(analyticsData.idlePercentage)}
-          unit="%"
-          icon={AlertTriangle}
-          color="#f59e0b"
-          alert={analyticsData.idlePercentage > 20}
+          title={analyticsData.confirmedTheftEvents > 0 ? "🚨 Theft Alerts" : "Theft Alerts"}
+          value={analyticsData.confirmedTheftEvents}
+          unit="alerts"
+          icon={Shield}
+          color={analyticsData.confirmedTheftEvents > 0 ? "#dc2626" : "#22c55e"}
+          alert={analyticsData.confirmedTheftEvents > 0}
+          subtext={analyticsData.theftFuelLost > 0 ? `${formatNumber(analyticsData.theftFuelLost)}L stolen` : "No theft detected"}
         />
         <KpiSparklineCard
           title="Potential Savings"
@@ -510,6 +639,376 @@ function AnalyticsPage() {
     </div>
   );
 
+  // ─── Render Theft Detection Tab ───────────────────────────────────────────────
+  const renderTheftDetection = () => (
+    <div className="space-y-6">
+      {/* Detection Summary Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-2xl p-5 border border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+              analyticsData.confirmedTheftEvents > 0 ? "bg-red-100" : "bg-green-100"
+            }`}>
+              <Shield className={`w-5 h-5 ${
+                analyticsData.confirmedTheftEvents > 0 ? "text-red-600" : "text-green-600"
+              }`} />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Theft Events</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {analyticsData.confirmedTheftEvents}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-5 border border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
+              <Fuel className="w-5 h-5 text-amber-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Fuel Stolen</p>
+              <p className={`text-2xl font-bold ${
+                analyticsData.theftFuelLost > 0 ? "text-red-600" : "text-gray-900"
+              }`}>
+                {formatNumber(analyticsData.theftFuelLost)}L
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-5 border border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+              analyticsData.confirmedTheftEvents > 0 ? "bg-red-100" : "bg-blue-100"
+            }`}>
+              <Activity className={`w-5 h-5 ${
+                analyticsData.confirmedTheftEvents > 0 ? "text-red-600" : "text-blue-600"
+              }`} />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Total Alerts</p>
+              <p className={`text-2xl font-bold ${
+                analyticsData.confirmedTheftEvents > 0 ? "text-red-600" : "text-gray-900"
+              }`}>
+                {analyticsData.confirmedTheftEvents}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-5 border border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+              analyticsData.fleetRiskScore > 50 ? "bg-red-100" : "bg-green-100"
+            }`}>
+              <AlertTriangle className={`w-5 h-5 ${
+                analyticsData.fleetRiskScore > 50 ? "text-red-600" : "text-green-600"
+              }`} />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Risk Score</p>
+              <p className={`text-2xl font-bold ${
+                analyticsData.fleetRiskScore > 50 ? "text-red-600" : "text-gray-900"
+              }`}>
+                {analyticsData.fleetRiskScore}/100
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Detection Configuration */}
+      <div className="bg-white rounded-2xl p-5 border border-gray-100">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+          Detection Configuration (Matching Python Script)
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-gray-500 mb-1">Drop Threshold</p>
+            <p className="font-mono font-medium">≥ {DROP_THRESHOLD}L</p>
+          </div>
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-gray-500 mb-1">Verify Delay</p>
+            <p className="font-mono font-medium">80 seconds</p>
+          </div>
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-gray-500 mb-1">Spike Window</p>
+            <p className="font-mono font-medium">±7 minutes</p>
+          </div>
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-gray-500 mb-1">Max Speed (Drop)</p>
+            <p className="font-mono font-medium">≤ 10 km/h</p>
+          </div>
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-gray-500 mb-1">Post-Verify Wait</p>
+            <p className="font-mono font-medium">7 minutes</p>
+          </div>
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-gray-500 mb-1">Median Filter</p>
+            <p className="font-mono font-medium">5 samples</p>
+          </div>
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-gray-500 mb-1">Recovery Tolerance</p>
+            <p className="font-mono font-medium">1.5L</p>
+          </div>
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-gray-500 mb-1">Duplicate Window</p>
+            <p className="font-mono font-medium">5 minutes</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Vehicle Detection Results */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h3 className="text-lg font-semibold text-gray-900">Vehicle Detection Results</h3>
+          <p className="text-sm text-gray-500">
+            Confirmed drop alerts from the real-time monitoring script
+          </p>
+        </div>
+
+        {theftLoading ? (
+          <div className="p-8 text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-red-500" />
+            <p className="text-gray-500">Analyzing fuel history for theft detection...</p>
+          </div>
+        ) : detectionResults.size === 0 ? (
+          <div className="p-8 text-center">
+            <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+              <Shield className="w-8 h-8 text-gray-400" />
+            </div>
+            <h4 className="text-lg font-medium text-gray-900 mb-2">No Data Available</h4>
+            <p className="text-sm text-gray-500">Fuel history data is not available for the selected period.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {Array.from(detectionResults.entries()).map(([imei, result]) => {
+              const vehicle = vehicles.find((v) => v.imei === imei);
+              if (!vehicle) return null;
+
+              // Prefer Python-confirmed alerts (ground truth from monitoring script)
+              // over history-based detection which reads from gs_object_data
+              // (a different data source than what Python monitors).
+              const pythonAlerts = pythonAlertsMap.get(imei) ?? [];
+              const confirmedAlerts = pythonAlerts.length > 0
+                ? pythonAlerts
+                : result.drops.filter((d) => d.isConfirmedDrop);
+              const hasAlerts = confirmedAlerts.length > 0;
+
+              // Skip vehicles with no alerts
+              if (!hasAlerts) {
+                return (
+                  <div key={imei} className="p-4 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center">
+                          <Shield className="w-5 h-5 text-green-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900">{vehicle.name}</p>
+                          <p className="text-sm text-gray-500">{vehicle.plateNumber}</p>
+                        </div>
+                      </div>
+                      <span className="px-3 py-1 rounded-full bg-green-100 text-green-700 text-sm font-medium">
+                        No Alerts
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-400">
+                      No fuel theft detected in this period
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div key={imei} className="p-4 hover:bg-red-50/50 transition-colors border-l-4 border-red-400">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
+                        <AlertTriangle className="w-5 h-5 text-red-600" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{vehicle.name}</p>
+                        <p className="text-sm text-gray-500">{vehicle.plateNumber}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="px-3 py-1 rounded-full bg-red-100 text-red-700 text-sm font-bold">
+                        {confirmedAlerts.length} ALERT{confirmedAlerts.length > 1 ? "S" : ""}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Only show confirmed alerts */}
+                  <div className="mt-3 space-y-2">
+                    {confirmedAlerts.map((drop, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-3 rounded-lg bg-red-50 border border-red-100"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm text-gray-500">
+                            {new Date(drop.at).toLocaleString()}
+                          </span>
+                          <span className="text-sm font-medium">
+                            {drop.fuelBefore.toFixed(1)}L → {drop.fuelAfter.toFixed(1)}L
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-red-600 text-white text-xs font-bold">
+                            ⚠️ FUEL THEFT ALERT
+                          </span>
+                        </div>
+                        <span className="text-sm font-bold text-red-600">
+                          -{drop.consumed.toFixed(1)}L
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
+                    <span>Total Stolen: {confirmedAlerts.reduce((s, d) => s + d.consumed, 0).toFixed(1)}L</span>
+                    <span>Net Drop: {result.netDrop !== null ? `${result.netDrop.toFixed(1)}L` : "N/A"}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Detection Alerts */}
+      {detectionState.alerts.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100">
+            <h3 className="text-lg font-semibold text-gray-900">Recent Alerts</h3>
+            <p className="text-sm text-gray-500">
+              {detectionState.alerts.length} confirmed alerts from real-time monitoring
+            </p>
+          </div>
+          <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
+            {detectionState.alerts.slice(0, 10).map((alert) => (
+              <div
+                key={alert.id}
+                className={`p-4 ${
+                  alert.severity === "critical"
+                    ? "bg-red-50 border-l-4 border-red-400"
+                    : alert.severity === "high"
+                    ? "bg-orange-50 border-l-4 border-orange-400"
+                    : alert.severity === "medium"
+                    ? "bg-amber-50 border-l-4 border-amber-400"
+                    : "bg-blue-50 border-l-4 border-blue-400"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="mt-1">
+                    {alert.type === "drop" ? (
+                      <Fuel className="w-5 h-5 text-red-500" />
+                    ) : alert.type === "rise" ? (
+                      <Zap className="w-5 h-5 text-green-500" />
+                    ) : (
+                      <AlertTriangle className="w-5 h-5 text-amber-500" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium text-gray-900">
+                      {alert.type === "drop" && `Fuel Drop: ${alert.amount.toFixed(1)}L`}
+                      {alert.type === "rise" && `Refuel: ${alert.amount.toFixed(1)}L`}
+                      {alert.type === "low_fuel" && `Low Fuel: ${alert.fuelAfter.toFixed(1)}L`}
+                    </p>
+                    <p className="text-sm text-gray-500">{alert.reason}</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {alert.timestamp.toLocaleString()} · {vehicles.find((v) => v.imei === alert.imei)?.name}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* DEBUG: Raw Bucket Data */}
+      {fuelHistoryCache.size > 0 && (
+        <div className="bg-gray-900 rounded-2xl p-5 text-gray-100 font-mono text-xs">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-white">Debug: Raw Fuel History Buckets</h3>
+            <span className="text-gray-400">Helps troubleshoot missing drops</span>
+          </div>
+          {Array.from(fuelHistoryCache.entries()).map(([imei, history]) => {
+            const vehicle = vehicles.find((v) => v.imei === imei);
+            const drops = detectionResults.get(imei)?.drops || [];
+            
+            // Find the biggest drop in the data
+            const biggestDrop = drops.length > 0 
+              ? drops.reduce((max, d) => d.consumed > max.consumed ? d : max, drops[0])
+              : null;
+
+            return (
+              <div key={imei} className="mb-6">
+                <p className="text-green-400 mb-2">
+                  {vehicle?.name || imei} ({history.buckets.length} buckets, {drops.length} drops detected)
+                </p>
+                
+                {biggestDrop && (
+                  <p className="text-yellow-400 mb-2">
+                    Biggest Drop: {biggestDrop.consumed.toFixed(2)}L at {new Date(biggestDrop.at).toLocaleTimeString()}
+                    {biggestDrop.isConfirmedDrop ? " ✓ CONFIRMED" : " (not confirmed)"}
+                  </p>
+                )}
+                
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="text-gray-500 border-b border-gray-700">
+                        <th className="py-1">Time</th>
+                        <th className="py-1">Fuel</th>
+                        <th className="py-1">Change</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.buckets.slice(0, 20).map((bucket, idx) => {
+                        const prevFuel = idx > 0 ? history.buckets[idx - 1].fuel : bucket.fuel;
+                        const change = bucket.fuel - prevFuel;
+                        const isDrop = change < -1;
+                        const isBigDrop = change <= -DROP_THRESHOLD;
+                        
+                        return (
+                          <tr 
+                            key={idx} 
+                            className={`border-b border-gray-800 ${
+                              isBigDrop ? "bg-red-900/30" : isDrop ? "bg-yellow-900/20" : ""
+                            }`}
+                          >
+                            <td className="py-1 text-gray-400">
+                              {new Date(bucket.dt).toLocaleTimeString()}
+                            </td>
+                            <td className="py-1">{bucket.fuel.toFixed(2)}L</td>
+                            <td className={`py-1 ${
+                              isBigDrop ? "text-red-400 font-bold" : 
+                              isDrop ? "text-yellow-400" : 
+                              change > 0 ? "text-green-400" : "text-gray-500"
+                            }`}>
+                              {change > 0 ? "+" : ""}{change.toFixed(2)}L
+                              {isBigDrop && " ⚠️ DROP"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {history.buckets.length > 20 && (
+                    <p className="text-gray-500 mt-2">... {history.buckets.length - 20} more buckets</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
   // ─── Render Content ───────────────────────────────────────────────────────────
   const renderContent = () => {
     if (error) {
@@ -555,12 +1054,12 @@ function AnalyticsPage() {
     switch (activeTab) {
       case "overview":
         return renderOverview();
-  
       case "cost":
         return renderCost();
       case "efficiency":
         return renderEfficiency();
-
+      case "theft":
+        return renderTheftDetection();
       default:
         return renderOverview();
     }

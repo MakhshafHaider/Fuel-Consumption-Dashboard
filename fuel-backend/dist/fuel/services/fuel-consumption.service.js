@@ -8,10 +8,15 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 var FuelConsumptionService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FuelConsumptionService = void 0;
 const common_1 = require("@nestjs/common");
+const typeorm_1 = require("@nestjs/typeorm");
+const typeorm_2 = require("typeorm");
 const fuel_transform_service_1 = require("./fuel-transform.service");
 const dynamic_table_query_service_1 = require("./dynamic-table-query.service");
 const fuel_drop_filter_util_1 = require("./fuel-drop-filter.util");
@@ -21,10 +26,34 @@ const MAX_SINGLE_READING_DROP = 2.0;
 let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionService {
     transform;
     dynQuery;
+    dataSource;
     logger = new common_1.Logger(FuelConsumptionService_1.name);
-    constructor(transform, dynQuery) {
+    constructor(transform, dynQuery, dataSource) {
         this.transform = transform;
         this.dynQuery = dynQuery;
+        this.dataSource = dataSource;
+    }
+    async getPythonAlerts(imei, from, to, unit = 'Liters') {
+        try {
+            const rows = await this.dataSource.query(`SELECT alert_id, imei, previous_fuel, current_fuel, drop_amount, dt_tracker
+         FROM fuel_drop_alerts
+         WHERE imei = ? AND dt_tracker BETWEEN ? AND ?
+         ORDER BY dt_tracker ASC`, [imei, from, to]);
+            return rows.map((r) => ({
+                at: r.dt_tracker instanceof Date
+                    ? r.dt_tracker.toISOString()
+                    : new Date(r.dt_tracker).toISOString(),
+                fuelBefore: Math.round(r.previous_fuel * 100) / 100,
+                fuelAfter: Math.round(r.current_fuel * 100) / 100,
+                consumed: Math.round(r.drop_amount * 100) / 100,
+                unit,
+                isConfirmedDrop: true,
+            }));
+        }
+        catch (err) {
+            this.logger.warn(`getPythonAlerts error for IMEI ${imei}: ${err}`);
+            return [];
+        }
     }
     async getConsumption(imei, from, to, sensor, fcrJson) {
         const rows = await this.dynQuery.getRowsInRange(imei, from, to);
@@ -72,6 +101,7 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
                 continue;
             raw.push({ ts, fuel: value, speed: row.speed });
         }
+        this.logger.log(`[DEBUG] IMEI ${imei} sensor param="${sensor.param}": ${rows.length} rows → ${raw.length} valid readings`);
         const transformed = (0, fuel_drop_filter_util_1.applyMedianFilter)(raw, fuel_drop_filter_util_1.FUEL_MEDIAN_SAMPLES);
         const drops = [];
         const refuels = [];
@@ -93,8 +123,8 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
             if (delta < -NOISE_THRESHOLD) {
                 if (singleConsumed >= fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD) {
                     const baselineFuel = prev.fuel;
-                    const baselineTs = prev.ts;
-                    const windowEndMs = baselineTs.getTime() + fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES * 60 * 1000;
+                    const dropTs = transformed[i].ts;
+                    const windowEndMs = dropTs.getTime() + fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES * 60 * 1000;
                     let verifiedFuel = fuel;
                     let j = i + 1;
                     while (j < transformed.length && transformed[j].ts.getTime() <= windowEndMs) {
@@ -107,12 +137,16 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
                         j++;
                     }
                     const totalConsumed = baselineFuel - verifiedFuel;
-                    const verifyPassed = (0, fuel_drop_filter_util_1.isDropConfirmedAfterDelay)(transformed[i].ts, baselineFuel, transformed);
-                    const fake = !verifyPassed || (0, fuel_drop_filter_util_1.isFakeSpike)(baselineTs, transformed, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES, fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD);
-                    const postRecovery = !fake && (0, fuel_drop_filter_util_1.isPostDropRecovery)(baselineTs, baselineFuel, transformed, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES);
+                    const verifyPassed = (0, fuel_drop_filter_util_1.isDropConfirmedAfterDelay)(dropTs, baselineFuel, transformed);
+                    const fake = !verifyPassed || (0, fuel_drop_filter_util_1.isFakeSpike)(dropTs, raw, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES, fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD);
+                    const postRecovery = !fake && (0, fuel_drop_filter_util_1.isPostDropRecovery)(dropTs, baselineFuel, raw, fuel_drop_filter_util_1.SPIKE_WINDOW_MINUTES);
                     const isConfirmedDrop = totalConsumed >= fuel_drop_filter_util_1.DROP_ALERT_THRESHOLD && !fake && !postRecovery;
+                    this.logger.log(`[DROP] IMEI ${imei} at ${transformed[i].ts.toISOString()}: ` +
+                        `baseline=${baselineFuel.toFixed(2)} verified=${verifiedFuel.toFixed(2)} ` +
+                        `consumed=${totalConsumed.toFixed(2)} verifyPassed=${verifyPassed} fake=${fake} ` +
+                        `postRecovery=${postRecovery} → confirmed=${isConfirmedDrop}`);
                     drops.push({
-                        at: baselineTs.toISOString(),
+                        at: prev.ts.toISOString(),
                         fuelBefore: Math.round(baselineFuel * 100) / 100,
                         fuelAfter: Math.round(verifiedFuel * 100) / 100,
                         consumed: Math.round(totalConsumed * 100) / 100,
@@ -202,7 +236,9 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
 exports.FuelConsumptionService = FuelConsumptionService;
 exports.FuelConsumptionService = FuelConsumptionService = FuelConsumptionService_1 = __decorate([
     (0, common_1.Injectable)(),
+    __param(2, (0, typeorm_1.InjectDataSource)()),
     __metadata("design:paramtypes", [fuel_transform_service_1.FuelTransformService,
-        dynamic_table_query_service_1.DynamicTableQueryService])
+        dynamic_table_query_service_1.DynamicTableQueryService,
+        typeorm_2.DataSource])
 ], FuelConsumptionService);
 //# sourceMappingURL=fuel-consumption.service.js.map

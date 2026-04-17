@@ -111,6 +111,8 @@ export declare class FuelController {
             unit: string;
             refuelEvents: number;
             samples: number;
+            drops: import("./services/fuel-consumption.service").DropEvent[];
+            refuels: import("./services/fuel-consumption.service").RefuelEvent[];
             tanks: {
                 sensorId: number;
                 sensorName: string;
@@ -173,6 +175,17 @@ export declare class FuelController {
         success: boolean;
         message: string;
         data: import("./services/fuel-stats.service").FuelStatsResult;
+    }>;
+    getDropAlerts(imei: string, query: FuelConsumptionDto): Promise<{
+        success: boolean;
+        message: string;
+        data: {
+            imei: string;
+            from: string;
+            to: string;
+            count: number;
+            drops: import("./services/fuel-consumption.service").PythonDropAlert[];
+        };
     }>;
     getTheftDetection(imei: string, query: FuelConsumptionDto, sensorIdStr?: string): Promise<{
         success: boolean;

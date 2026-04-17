@@ -152,6 +152,23 @@ export async function getFuelConsumption(
   return request<FuelConsumptionData>(`/vehicles/${imei}/fuel/consumption?${p}`, {}, token);
 }
 
+// ─── Python-confirmed drop alerts ──────────────────────────────────────────
+
+/**
+ * GET /vehicles/:imei/fuel/drop-alerts
+ * Returns confirmed drop alerts written by the Python monitoring script.
+ * These match the email alerts exactly (same source: gs_objects live state).
+ */
+export async function getFuelDropAlerts(
+  token: string,
+  imei: string,
+  from: string,
+  to: string
+): Promise<import("./types").PythonDropAlertsData> {
+  const p = new URLSearchParams({ from, to });
+  return request<import("./types").PythonDropAlertsData>(`/vehicles/${imei}/fuel/drop-alerts?${p}`, {}, token);
+}
+
 // ─── Fuel stats (NEW) ──────────────────────────────────────────────────────
 
 /**

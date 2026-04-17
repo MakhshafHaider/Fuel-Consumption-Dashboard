@@ -1,3 +1,4 @@
+import { DataSource } from 'typeorm';
 import { FuelSensor } from './fuel-sensor-resolver.service';
 import { FuelTransformService } from './fuel-transform.service';
 import { DynamicTableQueryService } from './dynamic-table-query.service';
@@ -40,11 +41,21 @@ export interface FcrConfig {
     summer?: string;
     winter?: string;
 }
+export interface PythonDropAlert {
+    at: string;
+    fuelBefore: number;
+    fuelAfter: number;
+    consumed: number;
+    unit: string;
+    isConfirmedDrop: true;
+}
 export declare class FuelConsumptionService {
     private readonly transform;
     private readonly dynQuery;
+    private readonly dataSource;
     private readonly logger;
-    constructor(transform: FuelTransformService, dynQuery: DynamicTableQueryService);
+    constructor(transform: FuelTransformService, dynQuery: DynamicTableQueryService, dataSource: DataSource);
+    getPythonAlerts(imei: string, from: Date, to: Date, unit?: string): Promise<PythonDropAlert[]>;
     getConsumption(imei: string, from: Date, to: Date, sensor: FuelSensor, fcrJson: string): Promise<ConsumptionResult>;
     private analyzeRows;
     private extractPricePerLiter;

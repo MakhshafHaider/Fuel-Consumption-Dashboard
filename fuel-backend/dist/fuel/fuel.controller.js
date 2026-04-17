@@ -159,6 +159,28 @@ let FuelController = FuelController_1 = class FuelController {
         const totalCost = tankResults.every((r) => r.estimatedCost !== null)
             ? Math.round(tankResults.reduce((s, r) => s + (r.estimatedCost ?? 0), 0) * 100) / 100
             : null;
+        const allDropsSeen = new Set();
+        const mergedDrops = tankResults
+            .flatMap((r) => r.drops)
+            .filter((d) => {
+            const key = `${d.at}:${d.consumed}`;
+            if (allDropsSeen.has(key))
+                return false;
+            allDropsSeen.add(key);
+            return true;
+        })
+            .sort((a, b) => a.at.localeCompare(b.at));
+        const allRefuelsSeen = new Set();
+        const mergedRefuels = tankResults
+            .flatMap((r) => r.refuels)
+            .filter((r) => {
+            const key = `${r.at}:${r.added}`;
+            if (allRefuelsSeen.has(key))
+                return false;
+            allRefuelsSeen.add(key);
+            return true;
+        })
+            .sort((a, b) => a.at.localeCompare(b.at));
         return {
             success: true,
             message: 'Fuel consumption calculated (multi-tank)',
@@ -172,6 +194,8 @@ let FuelController = FuelController_1 = class FuelController {
                 unit: sensors[0].units || 'L',
                 refuelEvents: tankResults.reduce((s, r) => s + r.refuelEvents, 0),
                 samples: tankResults.reduce((s, r) => s + r.samples, 0),
+                drops: mergedDrops,
+                refuels: mergedRefuels,
                 tanks: tankResults.map((r, i) => ({
                     sensorId: sensors[i].sensorId,
                     sensorName: sensors[i].name,
@@ -264,6 +288,23 @@ let FuelController = FuelController_1 = class FuelController {
             success: true,
             message: 'Fuel stats calculated',
             data: result,
+        };
+    }
+    async getDropAlerts(imei, query) {
+        this.logger.log(`GET /vehicles/${imei}/fuel/drop-alerts from=${query.from} to=${query.to}`);
+        const { from, to } = this.parseDateRange(query.from, query.to);
+        const unit = 'Liters';
+        const alerts = await this.consumptionService.getPythonAlerts(imei, from, to, unit);
+        return {
+            success: true,
+            message: `${alerts.length} confirmed drop alert(s) found`,
+            data: {
+                imei,
+                from: from.toISOString(),
+                to: to.toISOString(),
+                count: alerts.length,
+                drops: alerts,
+            },
         };
     }
     async getTheftDetection(imei, query, sensorIdStr) {
@@ -398,6 +439,14 @@ __decorate([
     __metadata("design:paramtypes", [String, fuel_consumption_dto_1.FuelConsumptionDto, String]),
     __metadata("design:returntype", Promise)
 ], FuelController.prototype, "getFuelStats", null);
+__decorate([
+    (0, common_1.Get)('drop-alerts'),
+    __param(0, (0, common_1.Param)('imei')),
+    __param(1, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, fuel_consumption_dto_1.FuelConsumptionDto]),
+    __metadata("design:returntype", Promise)
+], FuelController.prototype, "getDropAlerts", null);
 __decorate([
     (0, common_1.Get)('theft'),
     __param(0, (0, common_1.Param)('imei')),

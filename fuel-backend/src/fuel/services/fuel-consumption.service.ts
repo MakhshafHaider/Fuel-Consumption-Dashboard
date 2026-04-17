@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { FuelSensor } from './fuel-sensor-resolver.service';
 import { FuelTransformService } from './fuel-transform.service';
 import { DynamicTableQueryService } from './dynamic-table-query.service';
@@ -86,6 +88,15 @@ export interface FcrConfig {
   winter?: string;
 }
 
+export interface PythonDropAlert {
+  at: string;
+  fuelBefore: number;
+  fuelAfter: number;
+  consumed: number;
+  unit: string;
+  isConfirmedDrop: true;
+}
+
 @Injectable()
 export class FuelConsumptionService {
   private readonly logger = new Logger(FuelConsumptionService.name);
@@ -93,7 +104,56 @@ export class FuelConsumptionService {
   constructor(
     private readonly transform: FuelTransformService,
     private readonly dynQuery: DynamicTableQueryService,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * Query fuel_drop_alerts (written by the Python monitoring script) for
+   * confirmed theft/drop events in the given UTC range.
+   *
+   * Python stores dt_tracker as raw UTC DATETIME. TypeORM uses timezone:'Z'
+   * which sets the MySQL session to UTC, so stored UTC values are read back
+   * correctly as UTC JavaScript Dates.
+   */
+  async getPythonAlerts(
+    imei: string,
+    from: Date,
+    to: Date,
+    unit = 'Liters',
+  ): Promise<PythonDropAlert[]> {
+    try {
+      const rows = await this.dataSource.query<
+        {
+          alert_id: number;
+          imei: string;
+          previous_fuel: number;
+          current_fuel: number;
+          drop_amount: number;
+          dt_tracker: Date;
+        }[]
+      >(
+        `SELECT alert_id, imei, previous_fuel, current_fuel, drop_amount, dt_tracker
+         FROM fuel_drop_alerts
+         WHERE imei = ? AND dt_tracker BETWEEN ? AND ?
+         ORDER BY dt_tracker ASC`,
+        [imei, from, to],
+      );
+
+      return rows.map((r) => ({
+        at: r.dt_tracker instanceof Date
+          ? r.dt_tracker.toISOString()
+          : new Date(r.dt_tracker).toISOString(),
+        fuelBefore: Math.round(r.previous_fuel * 100) / 100,
+        fuelAfter: Math.round(r.current_fuel * 100) / 100,
+        consumed: Math.round(r.drop_amount * 100) / 100,
+        unit,
+        isConfirmedDrop: true as const,
+      }));
+    } catch (err) {
+      this.logger.warn(`getPythonAlerts error for IMEI ${imei}: ${err}`);
+      return [];
+    }
+  }
 
   async getConsumption(
     imei: string,
@@ -166,6 +226,10 @@ export class FuelConsumptionService {
       raw.push({ ts, fuel: value, speed: row.speed });
     }
 
+    this.logger.log(
+      `[DEBUG] IMEI ${imei} sensor param="${sensor.param}": ${rows.length} rows → ${raw.length} valid readings`,
+    );
+
     // ── Layer 1: Median Filter ────────────────────────────────────────────────
     // Mirrors Python _filter_fuel_for_alarms() / FUEL_MEDIAN_SAMPLES = 5.
     const transformed = applyMedianFilter(raw, FUEL_MEDIAN_SAMPLES);
@@ -193,8 +257,10 @@ export class FuelConsumptionService {
         if (singleConsumed >= DROP_ALERT_THRESHOLD) {
           // ── Large drop (≥ 8 L): mirrors Python's handle_fuel_drop thread ──────
           const baselineFuel = prev.fuel;
-          const baselineTs   = prev.ts;   // = the reading JUST BEFORE the drop
-          const windowEndMs  = baselineTs.getTime() + SPIKE_WINDOW_MINUTES * 60 * 1000;
+          const dropTs       = transformed[i].ts;  // anchor for all checks: the drop reading
+          // Scan window anchored on the DROP reading (curr.ts), not on prev.ts.
+          // Python's is_fake_spike uses dt_tracker = the LOW reading timestamp.
+          const windowEndMs  = dropTs.getTime() + SPIKE_WINDOW_MINUTES * 60 * 1000;
 
           // Scan forward within SPIKE_WINDOW_MINUTES to find the lowest
           // sustained fuel level (equivalent to Python re-reading after 80 s).
@@ -217,25 +283,32 @@ export class FuelConsumptionService {
           //   2. Checks vehicle is stationary (speed <= DROP_GATING_MAX_SPEED_KMH)
           //      before confirming — if moving, alert is cancelled.
           const verifyPassed = isDropConfirmedAfterDelay(
-            transformed[i].ts,   // drop timestamp (curr.ts)
+            dropTs,
             baselineFuel,
             transformed,
           );
 
-          // ── Layer 3: Fake-spike check (NOW includes speed veto) ───────────────
-          // isFakeSpike() mirrors Python is_fake_spike() including the movement
-          // veto: if any post-event reading has speed > DROP_GATING_MAX_SPEED_KMH,
-          // the drop is treated as driving consumption noise, not theft.
-          const fake = !verifyPassed || isFakeSpike(baselineTs, transformed, SPIKE_WINDOW_MINUTES, DROP_ALERT_THRESHOLD);
+          // ── Layer 3: Fake-spike check (includes speed veto) ──────────────────
+          // Python's is_fake_spike queries RAW DB data (not filtered) for the
+          // ±SPIKE_WINDOW_MINUTES window.  Pass `raw` here to match that exactly.
+          const fake = !verifyPassed || isFakeSpike(dropTs, raw, SPIKE_WINDOW_MINUTES, DROP_ALERT_THRESHOLD);
 
           // ── Layer 4: Post-drop verify ─────────────────────────────────────────
-          const postRecovery = !fake && isPostDropRecovery(baselineTs, baselineFuel, transformed, SPIKE_WINDOW_MINUTES);
+          // Python anchors the post-drop wait to dt_tracker (the DROP time).
+          const postRecovery = !fake && isPostDropRecovery(dropTs, baselineFuel, raw, SPIKE_WINDOW_MINUTES);
 
           const isConfirmedDrop =
             totalConsumed >= DROP_ALERT_THRESHOLD && !fake && !postRecovery;
 
+          this.logger.log(
+            `[DROP] IMEI ${imei} at ${transformed[i].ts.toISOString()}: ` +
+            `baseline=${baselineFuel.toFixed(2)} verified=${verifiedFuel.toFixed(2)} ` +
+            `consumed=${totalConsumed.toFixed(2)} verifyPassed=${verifyPassed} fake=${fake} ` +
+            `postRecovery=${postRecovery} → confirmed=${isConfirmedDrop}`,
+          );
+
           drops.push({
-            at:         baselineTs.toISOString(),
+            at:         prev.ts.toISOString(),
             fuelBefore: Math.round(baselineFuel * 100) / 100,
             fuelAfter:  Math.round(verifiedFuel * 100) / 100,
             consumed:   Math.round(totalConsumed * 100) / 100,
