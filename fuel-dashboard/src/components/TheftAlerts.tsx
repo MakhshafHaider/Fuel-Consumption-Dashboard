@@ -58,8 +58,7 @@ export default function TheftAlertsComponent({ loading: propLoading }: TheftAler
   }
 
   const criticalCount = theftData?.fleetSummary?.theftDrops ?? 0;
-  const suspiciousCount = theftData?.fleetSummary?.suspiciousDrops ?? 0;
-  const hasAlerts = criticalCount > 0 || suspiciousCount > 0;
+  const hasAlerts = criticalCount > 0;
 
   return (
     <div
@@ -93,7 +92,7 @@ export default function TheftAlertsComponent({ loading: propLoading }: TheftAler
             </span>
             {hasAlerts && (
               <span className="text-xs text-red-600">
-                {criticalCount} critical, {suspiciousCount} suspicious
+                {criticalCount} critical alert{criticalCount > 1 ? "s" : ""}
               </span>
             )}
           </div>

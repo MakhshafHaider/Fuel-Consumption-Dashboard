@@ -80,7 +80,14 @@ let DashboardService = DashboardService_1 = class DashboardService {
                 const sensor = await this.sensorResolver.resolveFuelSensor(v.imei);
                 unit = sensor.units || 'L';
                 const result = await this.consumptionService.getConsumption(v.imei, from, to, sensor, v.fcr ?? '');
-                consumed = result.consumed;
+                const netDropValue = result.netDrop ?? 0;
+                const useNetDrop = netDropValue > 0;
+                consumed = useNetDrop ? netDropValue : result.consumed;
+                if (useNetDrop && netDropValue !== result.consumed) {
+                    this.logger.log(`[NetDrop] IMEI ${v.imei}: Using netDrop=${netDropValue}L ` +
+                        `instead of summed=${result.consumed}L ` +
+                        `(diff: ${(result.consumed - netDropValue).toFixed(2)}L)`);
+                }
                 refueled = result.refueled;
                 cost = result.estimatedCost;
                 const latestRow = await this.dynQuery.getLatestRow(v.imei);

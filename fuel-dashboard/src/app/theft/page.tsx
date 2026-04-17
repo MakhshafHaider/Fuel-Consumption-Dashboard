@@ -171,8 +171,6 @@ function TheftDetectionPage() {
       fleetRiskScore: Math.floor(Math.random() * 60) + 20,
       fleetAlerts: theftCount > 0
         ? [`CRITICAL: ${theftCount} potential theft event(s) detected`]
-        : suspiciousCount > 0
-        ? [`WARNING: ${suspiciousCount} suspicious fuel drop(s) detected`]
         : ["No theft alerts"],
       vehicles: vehicles.slice(0, 8).map((v) => ({
         imei: v.imei,
@@ -240,7 +238,6 @@ function TheftDetectionPage() {
       riskScore: 65,
       alerts: [
         "CRITICAL: 1 potential theft event(s) detected with 18.5L fuel loss",
-        "WARNING: 2 suspicious fuel drop(s) with 12.0L fuel loss",
         "HIGH RISK: Immediate investigation recommended",
       ],
       drops,
@@ -384,16 +381,16 @@ function TheftDetectionPage() {
                       </div>
                     </div>
 
-                    {/* Suspicious/Theft Events */}
+                    {/* Theft Events */}
                     <div className="bg-white rounded-2xl p-5 border border-gray-100">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
                           <AlertTriangle className="w-5 h-5 text-red-600" />
                         </div>
                         <div>
-                          <p className="text-sm text-gray-500">Suspicious / Theft</p>
+                          <p className="text-sm text-gray-500">Theft Alerts</p>
                           <p className="text-2xl font-bold text-gray-900">
-                            {theftSummary.suspiciousDrops} / {theftSummary.theftDrops}
+                            {theftSummary.theftDrops}
                           </p>
                         </div>
                       </div>

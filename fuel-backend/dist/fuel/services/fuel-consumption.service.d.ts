@@ -2,6 +2,7 @@ import { DataSource } from 'typeorm';
 import { FuelSensor } from './fuel-sensor-resolver.service';
 import { FuelTransformService } from './fuel-transform.service';
 import { DynamicTableQueryService } from './dynamic-table-query.service';
+import { FuelReading } from './fuel-drop-filter.util';
 export interface RefuelEvent {
     at: string;
     fuelBefore: number;
@@ -33,6 +34,7 @@ export interface ConsumptionResult {
     firstFuel: number | null;
     lastFuel: number | null;
     netDrop: number | null;
+    readings?: FuelReading[];
 }
 export interface FcrConfig {
     source?: string;

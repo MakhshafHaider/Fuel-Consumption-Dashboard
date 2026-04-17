@@ -440,7 +440,17 @@ export function isPostRefuelFallback(
   const postEnd   = new Date(riseAt.getTime() + 2 * windowMs);
 
   const postReadings = allRows.filter((r) => r.ts > postStart && r.ts <= postEnd);
-  if (postReadings.length === 0) return false; // no data → assume still high
+
+  if (postReadings.length === 0) {
+    // Sparse data: no readings in the standard [+7, +14] min window.
+    // Extend the search up to +30 min and use the FIRST reading found.
+    // A real refuel keeps fuel near peak; a fake spike will show fuel near
+    // the original baseline regardless of how far out the next reading is.
+    const extendedEnd = new Date(riseAt.getTime() + 30 * 60 * 1000);
+    const firstExtended = allRows.find((r) => r.ts > postStart && r.ts <= extendedEnd);
+    if (!firstExtended) return false; // still no data → assume sustained
+    return firstExtended.fuel < peakFuel - eps;
+  }
 
   const lastPostFuel = postReadings[postReadings.length - 1].fuel;
   // Fell back more than eps from peak → fake jerk

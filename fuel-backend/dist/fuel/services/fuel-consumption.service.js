@@ -58,7 +58,7 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
     async getConsumption(imei, from, to, sensor, fcrJson) {
         const rows = await this.dynQuery.getRowsInRange(imei, from, to);
         this.logger.log(`Consumption for IMEI ${imei}: processing ${rows.length} rows`);
-        const { drops, refuels, firstFuel, lastFuel } = this.analyzeRows(rows, sensor, imei);
+        const { drops, refuels, firstFuel, lastFuel, readings } = this.analyzeRows(rows, sensor, imei);
         const consumed = drops
             .filter((d) => !d.isSensorJump)
             .reduce((sum, d) => sum + d.consumed, 0);
@@ -87,6 +87,7 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
             firstFuel: firstFuel !== null ? Math.round(firstFuel * 100) / 100 : null,
             lastFuel: lastFuel !== null ? Math.round(lastFuel * 100) / 100 : null,
             netDrop,
+            readings,
         };
     }
     analyzeRows(rows, sensor, imei) {
@@ -176,19 +177,28 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
                 const consolidationEndMs = baselineTs.getTime() + fuel_drop_filter_util_1.REFUEL_CONSOLIDATION_MINUTES * 60 * 1000;
                 let peakFuel = fuel;
                 let k = i + 1;
+                let falledBackInConsolidation = false;
                 while (k < transformed.length && transformed[k].ts.getTime() <= consolidationEndMs) {
                     const nextFuel = transformed[k].fuel;
                     if (nextFuel > peakFuel) {
                         peakFuel = nextFuel;
                     }
                     else if (nextFuel < baselineFuel + fuel_drop_filter_util_1.RISE_THRESHOLD) {
+                        if (peakFuel - nextFuel > fuel_drop_filter_util_1.POST_REFUEL_VERIFY_EPS_LITERS) {
+                            falledBackInConsolidation = true;
+                        }
                         break;
                     }
                     k++;
                 }
                 const totalAdded = peakFuel - baselineFuel;
                 if (totalAdded >= fuel_drop_filter_util_1.RISE_THRESHOLD) {
-                    const fakeRise = (0, fuel_drop_filter_util_1.isFakeRise)(baselineTs, transformed);
+                    if (falledBackInConsolidation) {
+                        this.logger.warn(`[RISE] IMEI ${imei} at ${baselineTs.toISOString()}: ` +
+                            `FAKE SPIKE — fuel rose ${totalAdded.toFixed(2)}L to peak=${peakFuel.toFixed(2)} ` +
+                            `but fell back within consolidation window`);
+                    }
+                    const fakeRise = falledBackInConsolidation || (0, fuel_drop_filter_util_1.isFakeRise)(baselineTs, transformed);
                     const recoveryRise = !fakeRise && (0, fuel_drop_filter_util_1.isRecoveryRise)(baselineTs, baselineFuel, peakFuel, transformed);
                     const postFallback = !fakeRise &&
                         !recoveryRise &&
@@ -209,7 +219,7 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
             }
             i++;
         }
-        return { drops, refuels, firstFuel, lastFuel };
+        return { drops, refuels, firstFuel, lastFuel, readings: raw };
     }
     extractPricePerLiter(fcrJson, from) {
         if (!fcrJson || fcrJson === '{}' || fcrJson === '')

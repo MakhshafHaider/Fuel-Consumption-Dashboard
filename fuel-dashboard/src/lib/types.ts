@@ -96,12 +96,53 @@ export interface FuelDropDetail {
   isConfirmedDrop?: boolean;
 }
 
+export interface FuelRefuelAnomaly {
+  isAnomaly: boolean;
+  anomalyType:
+    | 'fake_spike'
+    | 'sensor_reset'
+    | 'unsustained_rise'
+    | 'movement_during_refuel'
+    | 'no_stationary_period'
+    | 'voltage_glitch'
+    | 'none';
+  confidence: number;
+  reason: string;
+  details: {
+    fuelBefore: number;
+    peakFuel: number;
+    fuelAfterWindow: number;
+    hadMovementAfter: boolean;
+    maxSpeedDuring: number;
+    maxSpeedAfter: number;
+    sustainedMinutes: number;
+    fallbackAmount: number;
+  };
+}
+
 export interface FuelRefuelDetail {
   at: string;
   fuelBefore: number;
   fuelAfter: number;
   added: number;
   unit: string;
+  /** Anomaly detection metadata (added by FuelAnomalyMiddleware) */
+  _anomaly?: FuelRefuelAnomaly;
+  /** True if the refuel passed all anomaly checks */
+  isVerified?: boolean;
+  /** Reliability score (0-100) based on confidence */
+  reliabilityScore?: number;
+}
+
+export interface AnomalyMetadata {
+  summary: {
+    total: number;
+    verified: number;
+    anomalous: number;
+    byType: Record<string, number>;
+  };
+  detectionVersion: string;
+  checkedAt: string;
 }
 
 // ─── Python-confirmed drop alerts (from fuel_drop_alerts table) ────────────
@@ -151,6 +192,17 @@ export interface FuelConsumptionData {
    * metric because it does NOT inflate from sensor oscillations.
    */
   netDrop?: number | null;
+  /** Anomaly detection metadata (added by FuelAnomalyMiddleware) */
+  _anomalyMeta?: AnomalyMetadata;
+  /** Raw fuel readings (for anomaly detection, from backend) */
+  readings?: FuelReading[];
+}
+
+/** Fuel reading from backend (for anomaly detection) */
+export interface FuelReading {
+  ts: string;
+  fuel: number;
+  speed: number;
 }
 
 // ─── Fuel stats (NEW) ──────────────────────────────────────────────────────

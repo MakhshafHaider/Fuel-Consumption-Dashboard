@@ -6,12 +6,14 @@ import { useRouter } from "next/navigation";
 import {
   Loader2, Fuel, Navigation, Droplets, RefreshCw,
   TrendingDown, TrendingUp, Truck, Wifi, WifiOff,
-  AlertTriangle, ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, X,
+  ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, X,
+  Shield, Info, AlertTriangle,
 } from "lucide-react";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { getVehicles, getFuelConsumption, getCurrentFuel, getFuelStats, getFuelDropAlerts } from "@/lib/api";
 import { Vehicle, FuelConsumptionData, FuelCurrentData, FuelStatsData, ApiError, FuelDropDetail } from "@/lib/types";
+import { logAnomalies } from "@/lib/fuelAnomalyUtils";
 import Sidebar from "@/components/Sidebar";
 import { FuelEvent } from "@/components/RouteMap";
 import { fmtDateDisplay, fmtDateTime, toLocalMidnight } from "@/lib/dateUtils";
@@ -263,6 +265,24 @@ export default function RoutesPage() {
         const c = cons.value;
         setConsumption(c);
 
+        // DEBUG: Log the full refuel data to see if _anomaly is present
+        console.log("[RoutesPage] Fuel consumption data:", {
+          imei: c.imei,
+          refuels: c.refuels?.length || 0,
+          firstRefuel: c.refuels?.[0] ? {
+            at: c.refuels[0].at,
+            added: c.refuels[0].added,
+            _anomaly: c.refuels[0]._anomaly,
+            isVerified: c.refuels[0].isVerified,
+          } : null,
+          _anomalyMeta: c._anomalyMeta,
+        });
+
+        // Log anomalies for debugging
+        if (c.refuels && c.refuels.length > 0) {
+          logAnomalies(c.refuels, selectedImei);
+        }
+
         // Merge: python confirmed drops (isConfirmedDrop:true) + refuels from consumption
         // Python drops take priority — they come directly from the monitoring script
         // that reads gs_objects (live sensor state), not gs_object_data (historical).
@@ -276,10 +296,34 @@ export default function RoutesPage() {
           isConfirmedDrop: true,
         }));
 
+        // Process refuels with anomaly metadata
+        const refuelEvents: FuelEvent[] = (c.refuels ?? []).map(r => {
+          const isAnomaly = r._anomaly?.isAnomaly ?? false;
+          if (isAnomaly) {
+            console.log(`[RoutesPage] 🚨 Anomalous refuel detected: +${r.added}L at ${r.at}`, {
+              type: r._anomaly?.anomalyType,
+              reason: r._anomaly?.reason,
+              confidence: r._anomaly?.confidence,
+            });
+          }
+          return {
+            type: "refuel" as const,
+            at: r.at,
+            amount: r.added,
+            fuelBefore: r.fuelBefore,
+            fuelAfter: r.fuelAfter,
+            unit: r.unit,
+            isAnomaly: isAnomaly,
+            anomalyType: r._anomaly?.anomalyType,
+            anomalyReason: r._anomaly?.reason,
+            anomalyConfidence: r._anomaly?.confidence,
+          };
+        });
+
         const events: FuelEvent[] = [
           ...confirmedDropEvents,
-          ...(c.refuels ?? []).map(r => ({ type: "refuel" as const, at: r.at, amount: r.added, fuelBefore: r.fuelBefore, fuelAfter: r.fuelAfter, unit: r.unit })),
-        ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+          ...refuelEvents,
+        ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()); // Latest first
         setFuelEvents(events);
       } else if (cons.status === "rejected") {
         const e = cons.reason;
@@ -296,7 +340,7 @@ export default function RoutesPage() {
             fuelAfter: d.fuelAfter,
             unit: d.unit,
             isConfirmedDrop: true,
-          })).sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+          })).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()); // Latest first
           setFuelEvents(events);
         }
       }
@@ -306,13 +350,20 @@ export default function RoutesPage() {
   }, [token, selectedImei, range, handle401]);
 
   const selectedVehicle   = vehicles.find(v => v.imei === selectedImei);
+
+  // First derive the base fuel event categories
+  const drops             = fuelEvents.filter(e => e.type === "drop");
+  // Filter out anomalous refuels (fake spikes) from stats
+  const refuels           = fuelEvents.filter(e => e.type === "refuel" && !e.isAnomaly);
+
   const filteredEvents    = fuelEvents.filter(e => {
     // Never show noise / normal-consumption drops — only confirmed drop alerts
     if (e.type === "drop" && !e.isConfirmedDrop) return false;
+    // Filter out anomalous refuels (fake spikes)
+    if (e.type === "refuel" && e.isAnomaly) return false;
     return activeFilter === "all" ? true : activeFilter === "drops" ? e.type === "drop" : e.type === "refuel";
   });
-  const drops             = fuelEvents.filter(e => e.type === "drop");
-  const refuels           = fuelEvents.filter(e => e.type === "refuel");
+
   // Confirmed drops: >= 8 L and fuel stayed low for 7 continuous minutes
   const confirmedDrops    = drops.filter(e => e.isConfirmedDrop);
   const dropCount         = drops.length;
@@ -462,11 +513,12 @@ export default function RoutesPage() {
                     <span style={{ fontSize: 9, fontWeight: 700, color: "#22c55e", textTransform: "uppercase", letterSpacing: "0.06em" }}>Refueled</span>
                   </div>
                   <p style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E", lineHeight: 1 }}>{totalRefueled.toFixed(1)}</p>
-                  <p style={{ fontSize: 9, color: "#9CA3AF", marginTop: 2 }}>litres this period</p>
+                  <p style={{ fontSize: 9, color: "#9CA3AF", marginTop: 2 }}>
+                    litres this period
+                  </p>
                 </div>
               </div>
 
-           
             </div>
 
             {/* Vehicle list */}
@@ -596,13 +648,15 @@ export default function RoutesPage() {
                             : <>No drops</>}
                         </p>
                       </div>
-                      <div style={{ background: "#F0FDF4", borderRadius: 8, padding: "7px 8px" }}>
+                      <div style={{ background: "#F0FDF4", borderRadius: 8, padding: "7px 8px", border: "none" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 3, marginBottom: 2 }}>
                           <TrendingUp size={9} style={{ color: "#22c55e" }} />
                           <span style={{ fontSize: 8, fontWeight: 700, color: "#22c55e", textTransform: "uppercase" }}>Refuels</span>
                         </div>
                         <p style={{ fontSize: 14, fontWeight: 800, color: "#1A1A2E" }}>{refuelCount}</p>
-                        <p style={{ fontSize: 9, color: "#22c55e", fontWeight: 700 }}>+{totalRefueled.toFixed(1)} L</p>
+                        <p style={{ fontSize: 9, color: "#22c55e", fontWeight: 700 }}>
+                          +{totalRefueled.toFixed(1)} L
+                        </p>
                       </div>
                     </div>
                     <div style={{ marginTop: 6, background: "#F5F4F4", borderRadius: 8, padding: "6px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -720,7 +774,7 @@ export default function RoutesPage() {
                     const isDrop      = ev.type === "drop";
                     const isAlert     = isDrop && ev.isConfirmedDrop; // >= 8 L, stayed low 7 min
                     const isSmallDrop = isDrop && !ev.isConfirmedDrop;
-
+                    const isRefuel    = ev.type === "refuel";
                     // Confirmed alert → vivid red; small drop → muted orange; refuel → green
                     const dotBg    = isAlert ? "#dc2626" : isSmallDrop ? "#f97316" : "#22c55e";
                     const cardBg   = isAlert ? "#FEF2F2" : isSmallDrop ? "#FFF7ED" : "#F0FDF4";
@@ -732,7 +786,7 @@ export default function RoutesPage() {
                         <div style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0, background: dotBg, border: "2.5px solid white", boxShadow: `0 2px 6px ${dotBg}55`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: "white", zIndex: 1 }}>
                           {i + 1}
                         </div>
-                        <div style={{ flex: 1, background: cardBg, border: `1px solid ${cardBdr}`, borderRadius: 12, padding: "9px 11px", boxShadow: isAlert ? "0 2px 8px rgba(220,38,38,0.10)" : "none" }}>
+                          <div style={{ flex: 1, background: cardBg, border: `1px solid ${cardBdr}`, borderRadius: 12, padding: "9px 11px", boxShadow: isAlert ? "0 2px 8px rgba(220,38,38,0.10)" : "none" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                               {isDrop ? <TrendingDown size={10} style={{ color: labelClr }} /> : <TrendingUp size={10} style={{ color: labelClr }} />}
@@ -749,11 +803,12 @@ export default function RoutesPage() {
                             <span style={{ fontSize: 10, color: "#9CA3AF" }}>
                               {(ev.fuelBefore ?? 0).toFixed(1)} → {(ev.fuelAfter ?? 0).toFixed(1)} L
                             </span>
-                          
+
                             {isSmallDrop && (
                               <span style={{ fontSize: 8, color: "#9CA3AF", fontStyle: "italic" }}>noise / consumption</span>
                             )}
                           </div>
+
                         </div>
                       </div>
                     );

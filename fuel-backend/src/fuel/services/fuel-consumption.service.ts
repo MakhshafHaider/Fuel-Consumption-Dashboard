@@ -19,6 +19,7 @@ import {
   SPIKE_WINDOW_MINUTES,
   FUEL_MEDIAN_SAMPLES,
   REFUEL_CONSOLIDATION_MINUTES,
+  POST_REFUEL_VERIFY_EPS_LITERS,
 } from './fuel-drop-filter.util';
 
 const NOISE_THRESHOLD = 0.5;
@@ -78,6 +79,11 @@ export interface ConsumptionResult {
    * was lost" because it does NOT double-count sensor oscillations.
    */
   netDrop: number | null;
+  /**
+   * Raw fuel readings (for anomaly detection middleware).
+   * Optional - only included if readings are available.
+   */
+  readings?: FuelReading[];
 }
 
 export interface FcrConfig {
@@ -167,7 +173,7 @@ export class FuelConsumptionService {
       `Consumption for IMEI ${imei}: processing ${rows.length} rows`,
     );
 
-    const { drops, refuels, firstFuel, lastFuel } = this.analyzeRows(rows, sensor, imei);
+    const { drops, refuels, firstFuel, lastFuel, readings } = this.analyzeRows(rows, sensor, imei);
 
     // Exclude sensor-jump drops from the consumed total (mirrors Python's
     // MILEAGE_MAX_LITER_DROP_PER_READING filter on consumed_liters).
@@ -207,6 +213,7 @@ export class FuelConsumptionService {
       firstFuel: firstFuel !== null ? Math.round(firstFuel * 100) / 100 : null,
       lastFuel:  lastFuel  !== null ? Math.round(lastFuel  * 100) / 100 : null,
       netDrop,
+      readings, // Include readings for anomaly detection middleware
     };
   }
 
@@ -214,7 +221,7 @@ export class FuelConsumptionService {
     rows: DataRow[],
     sensor: FuelSensor,
     imei: string,
-  ): { drops: DropEvent[]; refuels: RefuelEvent[]; firstFuel: number | null; lastFuel: number | null } {
+  ): { drops: DropEvent[]; refuels: RefuelEvent[]; firstFuel: number | null; lastFuel: number | null; readings: FuelReading[] } {
     // ── Step 1: transform every row ──────────────────────────────────────────
     const raw: FuelReading[] = [];
     for (const row of rows) {
@@ -346,12 +353,21 @@ export class FuelConsumptionService {
         // fuel stabilises or max-track time elapses).
         let peakFuel = fuel;
         let k = i + 1;
+        // Track whether fuel fell back below the rise threshold WITHIN the
+        // consolidation window — a strong indicator of a sensor fake-spike
+        // (e.g. a 30-40 L jerk that recovers in seconds/minutes).
+        let falledBackInConsolidation = false;
         while (k < transformed.length && transformed[k].ts.getTime() <= consolidationEndMs) {
           const nextFuel = transformed[k].fuel;
           if (nextFuel > peakFuel) {
             peakFuel = nextFuel;
           } else if (nextFuel < baselineFuel + RISE_THRESHOLD) {
-            // Fell back below rise threshold within the window → stop
+            // Fuel fell back below the rise threshold within the window.
+            // Only flag as fake if the drop from peak exceeds the post-refuel
+            // epsilon (guards against tiny sensor oscillations on a real refuel).
+            if (peakFuel - nextFuel > POST_REFUEL_VERIFY_EPS_LITERS) {
+              falledBackInConsolidation = true;
+            }
             break;
           }
           k++;
@@ -361,8 +377,17 @@ export class FuelConsumptionService {
 
         if (totalAdded >= RISE_THRESHOLD) {
           // ── Layer A: isFakeRise (mirrors Python is_fake_rise) ────────────────
-          // Checks ±7 min window: speed veto, fall-back pattern, sustained-high check.
-          const fakeRise = isFakeRise(baselineTs, transformed);
+          // Short-circuit with consolidation fallback flag first: if fuel fell
+          // back significantly within the 15-min window, it is already confirmed
+          // as a fake spike regardless of what isFakeRise sees in its ±7-min window.
+          if (falledBackInConsolidation) {
+            this.logger.warn(
+              `[RISE] IMEI ${imei} at ${baselineTs.toISOString()}: ` +
+              `FAKE SPIKE — fuel rose ${totalAdded.toFixed(2)}L to peak=${peakFuel.toFixed(2)} ` +
+              `but fell back within consolidation window`,
+            );
+          }
+          const fakeRise = falledBackInConsolidation || isFakeRise(baselineTs, transformed);
 
           // ── Layer B: isRecoveryRise (mirrors Python is_recovery_rise) ─────────
           // "Dip then recover" pattern: fuel was already near peak BEFORE the rise
@@ -397,7 +422,7 @@ export class FuelConsumptionService {
       i++;
     }
 
-    return { drops, refuels, firstFuel, lastFuel };
+    return { drops, refuels, firstFuel, lastFuel, readings: raw };
   }
 
   private extractPricePerLiter(fcrJson: string, from: Date): number | null {

@@ -20,11 +20,11 @@ const TYPE_CONFIG = {
     label: "Normal",
   },
   suspicious: {
-    bg: "bg-amber-50",
-    text: "text-amber-700",
-    icon: AlertTriangle,
-    iconColor: "text-amber-500",
-    label: "Suspicious",
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    icon: CheckCircle,
+    iconColor: "text-blue-500",
+    label: "Review",
   },
   theft: {
     bg: "bg-red-50",
@@ -62,8 +62,8 @@ function DropEventTableComponent({ drops, title = "Fuel Drop Events", onDropClic
             <span className="text-gray-600">Theft</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-amber-500" />
-            <span className="text-gray-600">Suspicious</span>
+            <div className="w-3 h-3 rounded-full bg-blue-500" />
+            <span className="text-gray-600">Review</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-gray-300" />

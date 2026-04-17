@@ -17,6 +17,7 @@ import {
   SPIKE_WINDOW_MINUTES,
   FUEL_MEDIAN_SAMPLES,
   REFUEL_CONSOLIDATION_MINUTES,
+  POST_REFUEL_VERIFY_EPS_LITERS,
 } from './fuel-drop-filter.util';
 
 const NOISE_THRESHOLD = 0.5;
@@ -59,6 +60,8 @@ export interface FuelStatsResult {
   samples: number;
   drops: DropEvent[];
   refuels: RefuelEvent[];
+  /** Raw fuel readings for anomaly detection */
+  readings?: FuelReading[];
 }
 
 @Injectable()
@@ -83,7 +86,7 @@ export class FuelStatsService {
     const transformedRows = this.transformRows(rows, sensor, imei);
     // Pass speed from transformedRows into detectEvents so Layer 2 (verify delay
     // speed gate) and Layer 3 (isFakeSpike movement veto) can use it.
-    const { drops, refuels } = this.detectEvents(transformedRows, sensor.units || 'L');
+    const { drops, refuels, readings } = this.detectEvents(transformedRows, sensor.units || 'L');
 
     const consumed = Math.round(
       drops.filter((d) => !d.isSensorJump).reduce((s, d) => s + d.consumed, 0) * 100,
@@ -119,6 +122,7 @@ export class FuelStatsService {
       samples: rows.length,
       drops,
       refuels,
+      readings, // Include readings for anomaly detection middleware
     };
   }
 
@@ -148,7 +152,7 @@ export class FuelStatsService {
   private detectEvents(
     rows: Array<{ ts: Date; fuel: number | null; speed?: number }>,
     unit: string,
-  ): { drops: DropEvent[]; refuels: RefuelEvent[] } {
+  ): { drops: DropEvent[]; refuels: RefuelEvent[]; readings: FuelReading[] } {
     const drops: DropEvent[] = [];
     const refuels: RefuelEvent[] = [];
 
@@ -240,11 +244,17 @@ export class FuelStatsService {
         // Consolidation: find the true peak within the stabilisation window.
         let peakFuel = row.fuel;
         let k = i + 1;
+        // Track whether fuel fell back below the rise threshold WITHIN the
+        // consolidation window — strong indicator of a sensor fake-spike.
+        let falledBackInConsolidation = false;
         while (k < validRows.length && validRows[k].ts.getTime() <= consolidationEndMs) {
           const nextFuel = validRows[k].fuel;
           if (nextFuel > peakFuel) {
             peakFuel = nextFuel;
           } else if (nextFuel < baselineFuel + RISE_THRESHOLD) {
+            if (peakFuel - nextFuel > POST_REFUEL_VERIFY_EPS_LITERS) {
+              falledBackInConsolidation = true;
+            }
             break;
           }
           k++;
@@ -254,7 +264,9 @@ export class FuelStatsService {
 
         if (totalAdded >= RISE_THRESHOLD) {
           // ── Layer A: isFakeRise (mirrors Python is_fake_rise) ────────────────
-          const fakeRise = isFakeRise(baselineTs, validRows);
+          // Short-circuit: if fuel fell back significantly within the 15-min
+          // consolidation window, treat it as a fake spike immediately.
+          const fakeRise = falledBackInConsolidation || isFakeRise(baselineTs, validRows);
 
           // ── Layer B: isRecoveryRise (mirrors Python is_recovery_rise) ─────────
           const recoveryRise =
@@ -285,7 +297,7 @@ export class FuelStatsService {
       i++;
     }
 
-    return { drops, refuels };
+    return { drops, refuels, readings: fuelReadings };
   }
 
   // ─── Efficiency: Haversine distance ─────────────────────────────────────────

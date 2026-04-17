@@ -2,6 +2,7 @@ import { FuelSensor } from './fuel-sensor-resolver.service';
 import { FuelTransformService } from './fuel-transform.service';
 import { DynamicTableQueryService } from './dynamic-table-query.service';
 import { DropEvent, RefuelEvent } from './fuel-consumption.service';
+import { FuelReading } from './fuel-drop-filter.util';
 export interface EfficiencyStats {
     totalDistanceKm: number;
     kmPerLiter: number | null;
@@ -50,6 +51,7 @@ export interface FuelStatsResult {
     samples: number;
     drops: DropEvent[];
     refuels: RefuelEvent[];
+    readings?: FuelReading[];
 }
 export declare class FuelStatsService {
     private readonly transform;

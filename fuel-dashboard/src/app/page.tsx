@@ -8,13 +8,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   getVehicles, getDashboardSummary, getCurrentFuel,
   getFuelHistory, getFuelConsumption, getFuelStats,
-  getFuelSensors, getRefuelEvents, getFleetTheftReport,
+  getFuelSensors, getRefuelEvents,
   todayRange, dateInputToISO,
 } from "@/lib/api";
 import {
   Vehicle, DashboardSummaryData, FuelCurrentData,
   FuelHistoryData, FuelConsumptionData, FuelStatsData,
-  FuelSensorsData, RefuelEventsData, FleetTheftReportData, ApiError,
+  FuelSensorsData, RefuelEventsData, ApiError,
 } from "@/lib/types";
 
 import Sidebar              from "@/components/Sidebar";
@@ -27,7 +27,6 @@ import RecentFuelLogs       from "@/components/RecentFuelLogs";
 import QuickCalendar        from "@/components/QuickCalendar";
 import ActiveAlerts         from "@/components/ActiveAlerts";
 import FleetTargets         from "@/components/FleetTargets";
-import TheftAlerts          from "@/components/TheftAlerts";
 import { ShimmerStyle }     from "@/components/LoadingSkeleton";
 
 // ── Inline error banner ──────────────────────────────────────────────────────
@@ -80,7 +79,6 @@ const DashboardPage = memo(function DashboardPage() {
   const [fuelStats,     setFuelStats]     = useState<FuelStatsData | null>(null);
   const [fuelSensors,   setFuelSensors]   = useState<FuelSensorsData | null>(null);
   const [refuelEvents,  setRefuelEvents]  = useState<RefuelEventsData | null>(null);
-  const [fleetTheft,    setFleetTheft]    = useState<FleetTheftReportData | null>(null);
 
   const [loadingVehicleData, setLoadingVehicleData] = useState(false);
   const [vehicleDataError,   setVehicleDataError]   = useState<ApiError | Error | null>(null);
@@ -124,25 +122,19 @@ const DashboardPage = memo(function DashboardPage() {
       .finally(() => setLoadingSensors(false));
   }, [token, selectedImei, handle401]);
 
-  // ── Load dashboard summary + fleet theft overview ─────────────────────────
+  // ── Load dashboard summary ────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
     setLoadingSummary(true);
     setSummaryError(null);
 
-    Promise.allSettled([
-      getDashboardSummary(token, range.from, range.to),
-      getFleetTheftReport(token, range.from, range.to),
-    ]).then(([summaryRes, theftRes]) => {
-      if (summaryRes.status === "fulfilled") setSummary(summaryRes.value);
-      else {
-        const e = summaryRes.reason;
+    getDashboardSummary(token, range.from, range.to)
+      .then(setSummary)
+      .catch(e => {
         if (e instanceof ApiError && e.statusCode === 401) handle401();
         else setSummaryError(e instanceof ApiError ? e.userMessage : "Failed to load dashboard summary.");
-      }
-      if (theftRes.status === "fulfilled") setFleetTheft(theftRes.value);
-      // Silently ignore theft API failures (404 means not set up yet)
-    }).finally(() => setLoadingSummary(false));
+      })
+      .finally(() => setLoadingSummary(false));
   }, [token, range, handle401]);
 
   // ── Load per-vehicle data ──────────────────────────────────────────────────
@@ -326,108 +318,6 @@ const DashboardPage = memo(function DashboardPage() {
               <QuickCalendar />
             </div>
 
-            {/* Theft Detection Metrics */}
-            <div className="mt-6">
-              <h3 className="text-sm font-semibold mb-3" style={{ color: "#1A1A2E" }}>Theft Detection Overview</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* Risk Score Card */}
-                {(() => {
-                  const score = fleetTheft?.fleetRiskScore ?? 0;
-                  const level = fleetTheft?.fleetRiskLevel ?? "low";
-                  const circumference = 150.8;
-                  const offset = circumference - (score / 100) * circumference;
-                  const riskColor = level === "critical" ? "#DC2626" : level === "high" ? "#EF4444" : level === "medium" ? "#F59E0B" : "#22C55E";
-                  const riskBg    = level === "critical" ? "#FEE2E2" : level === "high" ? "#FEF2F2" : level === "medium" ? "#FEF3C7" : "#F0FDF4";
-                  const riskLabel = level === "critical" ? "Critical" : level === "high" ? "High Risk" : level === "medium" ? "Monitor" : "Safe";
-                  return (
-                    <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
-                      <div className="flex items-center gap-3">
-                        <div className="relative w-14 h-14 flex items-center justify-center">
-                          <svg className="w-14 h-14 transform -rotate-90">
-                            <circle cx="28" cy="28" r="24" stroke="#F3F4F6" strokeWidth="4" fill="none" />
-                            <circle cx="28" cy="28" r="24" stroke={riskColor} strokeWidth="4" fill="none"
-                              strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" />
-                          </svg>
-                          <span className="absolute text-sm font-bold" style={{ color: riskColor }}>
-                            {loadingSummary ? "—" : score}
-                          </span>
-                        </div>
-                        <div>
-                          <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Risk Score</p>
-                          <p className="text-sm font-bold" style={{ color: "#1A1A2E" }}>{loadingSummary ? "—" : riskLabel}</p>
-                        </div>
-                      </div>
-                      <div className="mt-3 inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium" style={{ background: riskBg, color: riskColor }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                        </svg>
-                        {loadingSummary ? "Loading…" : riskLabel}
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Total Drops Card */}
-                <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: "#DBEAFE" }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 2v20M12 2l-4 4M12 2l4 4"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Total Drops</p>
-                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>
-                        {loadingSummary ? "—" : (fleetTheft?.fleetSummary?.totalDrops ?? "—")}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Suspicious / Theft Card */}
-                <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: "#FEF3C7" }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                        <line x1="12" y1="9" x2="12" y2="13"/>
-                        <line x1="12" y1="17" x2="12.01" y2="17"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Suspicious / Theft</p>
-                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>
-                        {loadingSummary ? "—"
-                          : `${fleetTheft?.fleetSummary?.suspiciousDrops ?? "—"} / ${fleetTheft?.fleetSummary?.theftDrops ?? "—"}`}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Fuel Lost Card */}
-                <div className="rounded-xl p-4 bg-white" style={{ border: "1px solid #EFEFEF" }}>
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: "#FEF9C3" }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EAB308" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-.5 1.7-1 2-2h2v-4h-2c0-1-.5-1.5-1-2h0V5z"/>
-                        <path d="M2 9v1c0 1.1.9 2 2 2h1"/>
-                        <path d="M16 11h0"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium" style={{ color: "#6B7280" }}>Fuel Lost</p>
-                      <p className="text-xl font-bold" style={{ color: "#1A1A2E" }}>
-                        {loadingSummary ? "—"
-                          : fleetTheft?.fleetSummary?.totalFuelLost != null
-                            ? `${fleetTheft.fleetSummary.totalFuelLost.toFixed(1)}L`
-                            : "—"}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
             <div className="h-8" />
           </main>
         </div>
@@ -437,7 +327,6 @@ const DashboardPage = memo(function DashboardPage() {
           className="flex-shrink-0 flex flex-col gap-4 py-5 px-4 overflow-y-auto scroll-panel"
           style={{ width: 288, background: "#FFFFFF", borderLeft: "1px solid #EFEFEF" }}
         >
-          <TheftAlerts loading={loadingSummary} />
           <ActiveAlerts vehicles={summary?.vehicles ?? []} loading={loadingSummary} />
           <FleetTargets
             vehicles={summary?.vehicles ?? []}

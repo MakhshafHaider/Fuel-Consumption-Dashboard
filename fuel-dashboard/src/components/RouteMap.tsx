@@ -20,6 +20,11 @@ export interface FuelEvent {
   lng?: number;
   /** True when this drop is >= 8 L AND fuel stayed low for 7 min (Python is_fake_spike check). */
   isConfirmedDrop?: boolean;
+  /** Anomaly detection metadata (for refuels) */
+  isAnomaly?: boolean;
+  anomalyType?: string;
+  anomalyReason?: string;
+  anomalyConfidence?: number;
 }
 
 interface Props {

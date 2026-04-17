@@ -131,8 +131,13 @@ function isPostRefuelFallback(riseAt, peakFuel, allRows, spikeWindowMinutes = ex
     const postStart = new Date(riseAt.getTime() + windowMs);
     const postEnd = new Date(riseAt.getTime() + 2 * windowMs);
     const postReadings = allRows.filter((r) => r.ts > postStart && r.ts <= postEnd);
-    if (postReadings.length === 0)
-        return false;
+    if (postReadings.length === 0) {
+        const extendedEnd = new Date(riseAt.getTime() + 30 * 60 * 1000);
+        const firstExtended = allRows.find((r) => r.ts > postStart && r.ts <= extendedEnd);
+        if (!firstExtended)
+            return false;
+        return firstExtended.fuel < peakFuel - eps;
+    }
     const lastPostFuel = postReadings[postReadings.length - 1].fuel;
     return lastPostFuel < peakFuel - eps;
 }
