@@ -24,9 +24,10 @@ export interface BucketedRow {
   params: string;
 }
 
-// Enough for ~50 days of 10-min interval data (50 × 24 × 6 = 7200 rows/day × 7 ≈ 50k)
-// Used by consumption/stats/thrift which need raw rows for drop/refuel detection.
-const MAX_ROWS = 50000;
+// Raised from 50,000 → 500,000 to handle high-frequency trackers (vehicles reporting
+// every 30–60 s can generate ~3,900 rows/day; a 31-day month + 2h warmup needs ~121k rows).
+// 500k safely covers ~128 days at 3,900 rows/day, or ~6 months of typical 5-min data.
+const MAX_ROWS = 500000;
 
 @Injectable()
 export class DynamicTableQueryService {
@@ -97,6 +98,13 @@ export class DynamicTableQueryService {
       );
     }
 
+    if (rows.length === MAX_ROWS) {
+      this.logger.warn(
+        `IMEI ${imei}: getRowsInRange hit MAX_ROWS limit (${MAX_ROWS}). ` +
+          `Data may be truncated — consider reducing the query range or increasing MAX_ROWS further.`,
+      );
+    }
+
     return rows;
   }
 
@@ -120,6 +128,13 @@ export class DynamicTableQueryService {
        LIMIT ?`,
       [from, to, MAX_ROWS],
     );
+
+    if (rows.length === MAX_ROWS) {
+      this.logger.warn(
+        `IMEI ${imei}: getRowsInRangeOrEmpty hit MAX_ROWS limit (${MAX_ROWS}). ` +
+          `Data may be truncated — consider reducing the query range or increasing MAX_ROWS further.`,
+      );
+    }
 
     return rows;
   }

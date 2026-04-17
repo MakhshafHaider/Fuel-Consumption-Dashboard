@@ -20,6 +20,12 @@ import {
   POST_REFUEL_VERIFY_EPS_LITERS,
 } from './fuel-drop-filter.util';
 
+/**
+ * Extra hours of data fetched before the requested `from` date to warm up
+ * the causal median filter. Mirrors the same constant in fuel-consumption.service.ts.
+ */
+const WARMUP_HOURS = 2;
+
 const NOISE_THRESHOLD = 0.5;
 /** Used ONLY inside the drop window scan to detect a mid-window refuel and break early. */
 const REFUEL_THRESHOLD = 3.0;
@@ -80,13 +86,30 @@ export class FuelStatsService {
     sensor: FuelSensor,
     pricePerLiter: number | null,
   ): Promise<FuelStatsResult> {
-    const rows = await this.dynQuery.getRowsInRange(imei, from, to);
-    this.logger.log(`Stats for IMEI ${imei}: processing ${rows.length} rows`);
+    // Fetch extra data before `from` to warm up the causal median filter so
+    // that readings at the boundary of any query window are smoothed
+    // consistently regardless of which preset (week / month / custom) is used.
+    const warmupFrom = new Date(from.getTime() - WARMUP_HOURS * 60 * 60 * 1000);
+    const allRows = await this.dynQuery.getRowsInRange(imei, warmupFrom, to);
+    this.logger.log(
+      `Stats for IMEI ${imei}: fetched ${allRows.length} rows (${WARMUP_HOURS}h warmup from ${warmupFrom.toISOString()})`,
+    );
 
-    const transformedRows = this.transformRows(rows, sensor, imei);
-    // Pass speed from transformedRows into detectEvents so Layer 2 (verify delay
-    // speed gate) and Layer 3 (isFakeSpike movement veto) can use it.
-    const { drops, refuels, readings } = this.detectEvents(transformedRows, sensor.units || 'L');
+    // Run event detection on ALL rows (warmup + actual) so the median filter
+    // has full context for readings near the `from` boundary.
+    const allTransformedRows = this.transformRows(allRows, sensor, imei);
+    const { drops: allDrops, refuels: allRefuels, readings: allReadings } =
+      this.detectEvents(allTransformedRows, sensor.units || 'L');
+
+    // Filter events and readings to the actual requested [from, to] range.
+    const fromIso = from.toISOString();
+    const drops   = allDrops.filter((d) => d.at >= fromIso);
+    const refuels = allRefuels.filter((r) => r.at >= fromIso);
+    const readings = allReadings.filter((r) => r.ts >= from);
+
+    // Restrict row-level arrays to the actual range for distance / idle calc.
+    const rows           = allRows.filter((r) => new Date(r.dt_tracker) >= from);
+    const transformedRows = allTransformedRows.filter((r) => r.ts >= from);
 
     const consumed = Math.round(
       drops.filter((d) => !d.isSensorJump).reduce((s, d) => s + d.consumed, 0) * 100,

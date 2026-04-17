@@ -17,7 +17,7 @@ exports.DynamicTableQueryService = void 0;
 const common_1 = require("@nestjs/common");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
-const MAX_ROWS = 50000;
+const MAX_ROWS = 500000;
 let DynamicTableQueryService = DynamicTableQueryService_1 = class DynamicTableQueryService {
     dataSource;
     logger = new common_1.Logger(DynamicTableQueryService_1.name);
@@ -62,6 +62,10 @@ let DynamicTableQueryService = DynamicTableQueryService_1 = class DynamicTableQu
         if (!rows.length) {
             throw new common_1.NotFoundException(`No data found for vehicle ${imei} in the requested date range`);
         }
+        if (rows.length === MAX_ROWS) {
+            this.logger.warn(`IMEI ${imei}: getRowsInRange hit MAX_ROWS limit (${MAX_ROWS}). ` +
+                `Data may be truncated — consider reducing the query range or increasing MAX_ROWS further.`);
+        }
         return rows;
     }
     async getRowsInRangeOrEmpty(imei, from, to) {
@@ -76,6 +80,10 @@ let DynamicTableQueryService = DynamicTableQueryService_1 = class DynamicTableQu
        WHERE dt_tracker >= ? AND dt_tracker <= ?
        ORDER BY dt_tracker ASC
        LIMIT ?`, [from, to, MAX_ROWS]);
+        if (rows.length === MAX_ROWS) {
+            this.logger.warn(`IMEI ${imei}: getRowsInRangeOrEmpty hit MAX_ROWS limit (${MAX_ROWS}). ` +
+                `Data may be truncated — consider reducing the query range or increasing MAX_ROWS further.`);
+        }
         return rows;
     }
     async getRowsInRangeBucketed(imei, from, to, bucketSeconds) {

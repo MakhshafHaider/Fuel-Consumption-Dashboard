@@ -20,6 +20,7 @@ const typeorm_2 = require("typeorm");
 const fuel_transform_service_1 = require("./fuel-transform.service");
 const dynamic_table_query_service_1 = require("./dynamic-table-query.service");
 const fuel_drop_filter_util_1 = require("./fuel-drop-filter.util");
+const WARMUP_HOURS = 2;
 const NOISE_THRESHOLD = 0.5;
 const REFUEL_THRESHOLD = 3.0;
 const MAX_SINGLE_READING_DROP = 2.0;
@@ -56,9 +57,16 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
         }
     }
     async getConsumption(imei, from, to, sensor, fcrJson) {
-        const rows = await this.dynQuery.getRowsInRange(imei, from, to);
-        this.logger.log(`Consumption for IMEI ${imei}: processing ${rows.length} rows`);
-        const { drops, refuels, firstFuel, lastFuel, readings } = this.analyzeRows(rows, sensor, imei);
+        const warmupFrom = new Date(from.getTime() - WARMUP_HOURS * 60 * 60 * 1000);
+        const allRows = await this.dynQuery.getRowsInRange(imei, warmupFrom, to);
+        this.logger.log(`Consumption for IMEI ${imei}: fetched ${allRows.length} rows (${WARMUP_HOURS}h warmup from ${warmupFrom.toISOString()})`);
+        const { drops: allDrops, refuels: allRefuels, readings } = this.analyzeRows(allRows, sensor, imei);
+        const fromIso = from.toISOString();
+        const drops = allDrops.filter((d) => d.at >= fromIso);
+        const refuels = allRefuels.filter((r) => r.at >= fromIso);
+        const actualReadings = readings.filter((r) => r.ts >= from);
+        const firstFuel = actualReadings.length > 0 ? actualReadings[0].fuel : null;
+        const lastFuel = actualReadings.length > 0 ? actualReadings[actualReadings.length - 1].fuel : null;
         const consumed = drops
             .filter((d) => !d.isSensorJump)
             .reduce((sum, d) => sum + d.consumed, 0);
@@ -81,7 +89,7 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
             estimatedCost,
             unit: sensor.units || 'L',
             refuelEvents: refuels.length,
-            samples: rows.length,
+            samples: actualReadings.length,
             refuels,
             drops,
             firstFuel: firstFuel !== null ? Math.round(firstFuel * 100) / 100 : null,

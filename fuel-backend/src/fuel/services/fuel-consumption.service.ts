@@ -22,6 +22,18 @@ import {
   POST_REFUEL_VERIFY_EPS_LITERS,
 } from './fuel-drop-filter.util';
 
+/**
+ * How many hours of data to fetch BEFORE the requested `from` date in order to
+ * warm up the causal median filter.  Without this, the first few readings in
+ * any query window are smoothed from an incomplete window, producing different
+ * median values for the same sensor readings depending on the query range —
+ * causing "This Week" and "This Month" to disagree on the same refuel events.
+ *
+ * With a full 5-sample causal filter and data arriving every ~1–2 min,
+ * 2 hours is more than enough to saturate the window even for sparse datasets.
+ */
+const WARMUP_HOURS = 2;
+
 const NOISE_THRESHOLD = 0.5;
 /** Used ONLY inside the drop window scan to detect a mid-window refuel and break early. */
 const REFUEL_THRESHOLD = 3.0;
@@ -168,12 +180,28 @@ export class FuelConsumptionService {
     sensor: FuelSensor,
     fcrJson: string,
   ): Promise<ConsumptionResult> {
-    const rows = await this.dynQuery.getRowsInRange(imei, from, to);
+    // Fetch extra data before `from` to warm up the causal median filter so
+    // that readings at the boundary of any query window are smoothed
+    // consistently regardless of which preset (week / month / custom) is used.
+    const warmupFrom = new Date(from.getTime() - WARMUP_HOURS * 60 * 60 * 1000);
+    const allRows = await this.dynQuery.getRowsInRange(imei, warmupFrom, to);
     this.logger.log(
-      `Consumption for IMEI ${imei}: processing ${rows.length} rows`,
+      `Consumption for IMEI ${imei}: fetched ${allRows.length} rows (${WARMUP_HOURS}h warmup from ${warmupFrom.toISOString()})`,
     );
 
-    const { drops, refuels, firstFuel, lastFuel, readings } = this.analyzeRows(rows, sensor, imei);
+    // Run analysis on the full (warmup + actual) dataset so the median filter
+    // has proper context for readings near the `from` boundary.
+    const { drops: allDrops, refuels: allRefuels, readings } = this.analyzeRows(allRows, sensor, imei);
+
+    // Filter events to only those that fall within the actual requested range.
+    const fromIso = from.toISOString();
+    const drops   = allDrops.filter((d) => d.at >= fromIso);
+    const refuels = allRefuels.filter((r) => r.at >= fromIso);
+
+    // firstFuel / lastFuel must reflect the actual [from, to] period, not the warmup.
+    const actualReadings = readings.filter((r) => r.ts >= from);
+    const firstFuel = actualReadings.length > 0 ? actualReadings[0].fuel : null;
+    const lastFuel  = actualReadings.length > 0 ? actualReadings[actualReadings.length - 1].fuel : null;
 
     // Exclude sensor-jump drops from the consumed total (mirrors Python's
     // MILEAGE_MAX_LITER_DROP_PER_READING filter on consumed_liters).
@@ -207,7 +235,7 @@ export class FuelConsumptionService {
       estimatedCost,
       unit: sensor.units || 'L',
       refuelEvents: refuels.length,
-      samples: rows.length,
+      samples: actualReadings.length,
       refuels,
       drops,
       firstFuel: firstFuel !== null ? Math.round(firstFuel * 100) / 100 : null,

@@ -15,6 +15,7 @@ const common_1 = require("@nestjs/common");
 const fuel_transform_service_1 = require("./fuel-transform.service");
 const dynamic_table_query_service_1 = require("./dynamic-table-query.service");
 const fuel_drop_filter_util_1 = require("./fuel-drop-filter.util");
+const WARMUP_HOURS = 2;
 const NOISE_THRESHOLD = 0.5;
 const REFUEL_THRESHOLD = 3.0;
 const MAX_SINGLE_READING_DROP = 2.0;
@@ -27,10 +28,17 @@ let FuelStatsService = FuelStatsService_1 = class FuelStatsService {
         this.dynQuery = dynQuery;
     }
     async getStats(imei, from, to, sensor, pricePerLiter) {
-        const rows = await this.dynQuery.getRowsInRange(imei, from, to);
-        this.logger.log(`Stats for IMEI ${imei}: processing ${rows.length} rows`);
-        const transformedRows = this.transformRows(rows, sensor, imei);
-        const { drops, refuels, readings } = this.detectEvents(transformedRows, sensor.units || 'L');
+        const warmupFrom = new Date(from.getTime() - WARMUP_HOURS * 60 * 60 * 1000);
+        const allRows = await this.dynQuery.getRowsInRange(imei, warmupFrom, to);
+        this.logger.log(`Stats for IMEI ${imei}: fetched ${allRows.length} rows (${WARMUP_HOURS}h warmup from ${warmupFrom.toISOString()})`);
+        const allTransformedRows = this.transformRows(allRows, sensor, imei);
+        const { drops: allDrops, refuels: allRefuels, readings: allReadings } = this.detectEvents(allTransformedRows, sensor.units || 'L');
+        const fromIso = from.toISOString();
+        const drops = allDrops.filter((d) => d.at >= fromIso);
+        const refuels = allRefuels.filter((r) => r.at >= fromIso);
+        const readings = allReadings.filter((r) => r.ts >= from);
+        const rows = allRows.filter((r) => new Date(r.dt_tracker) >= from);
+        const transformedRows = allTransformedRows.filter((r) => r.ts >= from);
         const consumed = Math.round(drops.filter((d) => !d.isSensorJump).reduce((s, d) => s + d.consumed, 0) * 100) / 100;
         const refueled = Math.round(refuels.reduce((s, r) => s + r.added, 0) * 100) / 100;
         const estimatedCost = pricePerLiter !== null ? Math.round(consumed * pricePerLiter * 100) / 100 : null;
