@@ -13,6 +13,7 @@ import { FuelConsumptionService } from './services/fuel-consumption.service';
 import { FuelStatsService } from './services/fuel-stats.service';
 import { ThriftService } from './services/thrift.service';
 import { TheftDetectionService } from './services/theft-detection.service';
+import { TripAnalyzerService } from './services/trip-analyzer.service';
 import { FuelAnomalyMiddleware } from '../common/middleware/fuel-anomaly.middleware';
 
 @Module({
@@ -26,6 +27,7 @@ import { FuelAnomalyMiddleware } from '../common/middleware/fuel-anomaly.middlew
     FuelStatsService,
     ThriftService,
     TheftDetectionService,
+    TripAnalyzerService,
   ],
   exports: [
     FuelSensorResolverService,
@@ -36,6 +38,7 @@ import { FuelAnomalyMiddleware } from '../common/middleware/fuel-anomaly.middlew
     FuelStatsService,
     ThriftService,
     TheftDetectionService,
+    TripAnalyzerService,
   ],
 })
 export class FuelModule implements NestModule {

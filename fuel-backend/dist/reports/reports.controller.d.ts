@@ -379,4 +379,55 @@ export declare class ReportsController {
             })[];
         };
     }>;
+    getTrips(req: {
+        user: {
+            id: number;
+        };
+    }, query: ReportRangeDto): Promise<{
+        success: boolean;
+        message: string;
+        report: string;
+        data: {
+            from: string;
+            to: string;
+            fleetTotals: {
+                totalTrips: number;
+                totalDistanceKm: number;
+                totalFuelConsumed: number;
+                tripFuelConsumed: number;
+                unassignedFuelConsumed: number;
+                totalDurationMinutes: number;
+                avgKmPerLiter: number | null;
+            };
+            vehicles: ({
+                imei: string;
+                name: string;
+                plateNumber: string;
+                unit: string;
+                totalTrips: number;
+                totalDistanceKm: number;
+                totalFuelConsumed: number;
+                tripFuelConsumed: number;
+                unassignedFuelConsumed: number;
+                totalDurationMinutes: number;
+                avgKmPerLiter: number | null;
+                trips: import("../fuel/services/trip-analyzer.service").Trip[];
+                status: "ok";
+            } | {
+                imei: string;
+                name: string;
+                plateNumber: string;
+                unit: "L";
+                totalTrips: number;
+                totalDistanceKm: number;
+                totalFuelConsumed: number;
+                tripFuelConsumed: number;
+                unassignedFuelConsumed: number;
+                totalDurationMinutes: number;
+                avgKmPerLiter: number | null;
+                trips: never[];
+                status: "no_data";
+            })[];
+        };
+    }>;
 }

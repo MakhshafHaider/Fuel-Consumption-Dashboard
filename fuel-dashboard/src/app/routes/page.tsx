@@ -390,14 +390,13 @@ export default function RoutesPage() {
   const firstFuel = consumption?.firstFuel ?? null;
   const lastFuel = consumption?.lastFuel ?? null;
 
+  // Mass-balance formula: (start + refueled) − end = actual consumption.
+  // Falls back to confirmed-drop sum only when boundary readings are missing.
   let totalDropped: number;
   if (firstFuel != null && lastFuel != null) {
-    // Accurate calculation: (start + refueled) - current = actual consumption
     totalDropped = firstFuel + totalRefueled - lastFuel;
-    // Ensure it's never negative (can happen with data errors)
     if (totalDropped < 0) totalDropped = 0;
   } else {
-    // Fallback to confirmed drops only if we don't have proper readings
     totalDropped = confirmedDrops.reduce((s, e) => s + e.amount, 0);
   }
   const netChange = totalRefueled - totalDropped;

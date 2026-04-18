@@ -127,6 +127,17 @@ let ReportsController = ReportsController_1 = class ReportsController {
             data,
         };
     }
+    async getTrips(req, query) {
+        this.requireRange(query);
+        this.logger.log(`GET /reports/trips user=${req.user.id} from=${query.from} to=${query.to}`);
+        const data = await this.reportsService.getTripsReport(req.user.id, query.from, query.to);
+        return {
+            success: true,
+            message: 'Trips report generated',
+            report: 'trips',
+            data,
+        };
+    }
 };
 exports.ReportsController = ReportsController;
 __decorate([
@@ -200,6 +211,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, report_range_dto_1.ReportRangeDto]),
     __metadata("design:returntype", Promise)
 ], ReportsController.prototype, "getTheftDetection", null);
+__decorate([
+    (0, common_1.Get)('trips'),
+    __param(0, (0, common_1.Request)()),
+    __param(1, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, report_range_dto_1.ReportRangeDto]),
+    __metadata("design:returntype", Promise)
+], ReportsController.prototype, "getTrips", null);
 exports.ReportsController = ReportsController = ReportsController_1 = __decorate([
     (0, common_1.Controller)('reports'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt')),

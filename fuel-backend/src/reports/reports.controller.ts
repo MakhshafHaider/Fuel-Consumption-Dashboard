@@ -235,4 +235,29 @@ export class ReportsController {
       data,
     };
   }
+
+  /**
+   * GET /reports/trips?from=&to=
+   * Per-vehicle trip analysis: detects trips from ignition on/off transitions.
+   * Returns individual trips with distance, fuel consumed, duration, and efficiency.
+   */
+  @Get('trips')
+  async getTrips(
+    @Request() req: { user: { id: number } },
+    @Query() query: ReportRangeDto,
+  ) {
+    this.requireRange(query);
+    this.logger.log(
+      `GET /reports/trips user=${req.user.id} from=${query.from} to=${query.to}`,
+    );
+    const data = await this.reportsService.getTripsReport(
+      req.user.id, query.from, query.to,
+    );
+    return {
+      success: true,
+      message: 'Trips report generated',
+      report: 'trips',
+      data,
+    };
+  }
 }

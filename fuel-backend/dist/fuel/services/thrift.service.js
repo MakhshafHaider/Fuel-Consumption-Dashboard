@@ -29,8 +29,9 @@ let ThriftService = ThriftService_1 = class ThriftService {
         const rows = await this.dynQuery.getRowsInRange(imei, from, to);
         this.logger.log(`Thrift for IMEI ${imei}: processing ${rows.length} rows`);
         const enriched = this.enrichRows(rows, sensor, imei);
-        const totalConsumed = this.calcTotalConsumed(enriched);
+        const summedConsumed = this.calcTotalConsumed(enriched);
         const totalDistanceKm = this.calcTotalDistance(rows);
+        const totalConsumed = summedConsumed;
         const idleDrain = this.calcIdleDrain(enriched, totalConsumed);
         const highSpeedDrain = this.calcHighSpeedDrain(enriched, totalConsumed);
         const dailyTrend = this.calcDailyTrend(enriched, from, to, sensor.units || 'L');

@@ -8,6 +8,7 @@ import { FuelTransformService } from '../fuel/services/fuel-transform.service';
 import { DynamicTableQueryService } from '../fuel/services/dynamic-table-query.service';
 import { ThriftService } from '../fuel/services/thrift.service';
 import { TheftDetectionService } from '../fuel/services/theft-detection.service';
+import { TripAnalyzerService } from '../fuel/services/trip-analyzer.service';
 
 const NOISE_THRESHOLD = 0.5;
 
@@ -24,17 +25,25 @@ export class ReportsService {
     private readonly dynQuery: DynamicTableQueryService,
     private readonly thriftService: ThriftService,
     private readonly theftDetectionService: TheftDetectionService,
+    private readonly tripAnalyzerService: TripAnalyzerService,
   ) {}
 
   // ─── Shared helpers ───────────────────────────────────────────────────────
 
   parseDateRange(fromStr: string, toStr: string): { from: Date; to: Date } {
     const from = new Date(fromStr);
-    const to = new Date(toStr);
+    let to = new Date(toStr);
     if (isNaN(from.getTime()) || isNaN(to.getTime())) {
       throw new BadRequestException('Invalid date format. Use ISO 8601 UTC.');
     }
-    if (from >= to) {
+
+    // Allow same-day selection (e.g. Apr 18 -> Apr 18) by expanding
+    // the upper bound to a full 24h window.
+    if (from.getTime() === to.getTime()) {
+      to = new Date(to.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    if (from > to) {
       throw new BadRequestException("'from' must be before 'to'");
     }
     return { from, to };
@@ -110,7 +119,16 @@ export class ReportsService {
           const result = await this.consumptionService.getConsumption(
             v.imei, from, to, sensor, fcrJson,
           );
-          totalConsumed += result.consumed;
+
+          // Align with Routes page mass-balance:
+          // consumed = (firstFuel + refueled) - lastFuel
+          // i.e. refueled + netDrop, clamped at zero.
+          // This matches the period summary users see on Routes.
+          const consumed = result.netDrop !== null
+            ? Math.max(0, result.refueled + result.netDrop)
+            : result.consumed;
+
+          totalConsumed += consumed;
           totalRefueled += result.refueled;
           if (result.estimatedCost !== null) {
             totalCost += result.estimatedCost;
@@ -120,7 +138,7 @@ export class ReportsService {
             imei: v.imei,
             name: v.name,
             plateNumber: v.plate_number,
-            consumed: result.consumed,
+            consumed: Math.round(consumed * 100) / 100,
             refueled: result.refueled,
             estimatedCost: result.estimatedCost,
             refuelEvents: result.refuelEvents,
@@ -747,6 +765,119 @@ export class ReportsService {
       fleetRiskLevel,
       fleetRiskScore: Math.round(fleetRiskScore),
       vehicles: results.sort((a, b) => b.riskScore - a.riskScore),
+    };
+  }
+
+  // ─── 10. Trips Report ─────────────────────────────────────────────────────
+
+  async getTripsReport(userId: number, fromStr: string, toStr: string) {
+    const { from, to } = this.parseDateRange(fromStr, toStr);
+    const vehicles = await this.getUserVehicles(userId);
+
+    let fleetTotalTrips = 0;
+    let fleetTotalDistance = 0;
+    let fleetTripFuel = 0;
+    let fleetPeriodFuel = 0;
+    let fleetTotalDuration = 0;
+
+    const results = await Promise.all(
+      vehicles.map(async (v) => {
+        try {
+          const sensor = await this.sensorResolver.resolveFuelSensor(v.imei);
+          const [analysis, consumption] = await Promise.all([
+            this.tripAnalyzerService.analyzeTrips(v.imei, from, to, sensor),
+            this.consumptionService.getConsumption(v.imei, from, to, sensor, v.fcr ?? ''),
+          ]);
+
+          const periodFuelConsumed = consumption.netDrop !== null
+            ? Math.max(0, consumption.refueled + consumption.netDrop)
+            : consumption.consumed;
+          const rawTripFuelConsumed = analysis.totalFuelConsumed;
+          const tripFuelScale =
+            rawTripFuelConsumed > 0 && rawTripFuelConsumed > periodFuelConsumed
+              ? periodFuelConsumed / rawTripFuelConsumed
+              : 1;
+          const normalizedTrips = tripFuelScale < 1
+            ? analysis.trips.map((t) => {
+                const normalizedFuel = Math.round((t.fuelConsumed * tripFuelScale) * 100) / 100;
+                return {
+                  ...t,
+                  fuelConsumed: normalizedFuel,
+                  kmPerLiter:
+                    normalizedFuel > 0 && t.distanceKm > 0
+                      ? Math.round((t.distanceKm / normalizedFuel) * 100) / 100
+                      : null,
+                };
+              })
+            : analysis.trips;
+          const tripFuelConsumed = Math.min(rawTripFuelConsumed, periodFuelConsumed);
+          const unassignedFuelConsumed = Math.max(0, periodFuelConsumed - tripFuelConsumed);
+
+          fleetTotalTrips += analysis.totalTrips;
+          fleetTotalDistance += analysis.totalDistanceKm;
+          fleetTripFuel += tripFuelConsumed;
+          fleetPeriodFuel += periodFuelConsumed;
+          fleetTotalDuration += analysis.totalDurationMinutes;
+
+          return {
+            imei: v.imei,
+            name: v.name,
+            plateNumber: v.plate_number,
+            unit: analysis.unit,
+            totalTrips: analysis.totalTrips,
+            totalDistanceKm: analysis.totalDistanceKm,
+            totalFuelConsumed: Math.round(periodFuelConsumed * 100) / 100,
+            tripFuelConsumed: Math.round(tripFuelConsumed * 100) / 100,
+            unassignedFuelConsumed: Math.round(unassignedFuelConsumed * 100) / 100,
+            totalDurationMinutes: analysis.totalDurationMinutes,
+            avgKmPerLiter:
+              tripFuelConsumed > 0 && analysis.totalDistanceKm > 0
+                ? Math.round((analysis.totalDistanceKm / tripFuelConsumed) * 100) / 100
+                : null,
+            trips: normalizedTrips,
+            status: 'ok' as const,
+          };
+        } catch (err) {
+          this.logger.warn(`Trips report skip IMEI ${v.imei}: ${String(err)}`);
+          return {
+            imei: v.imei,
+            name: v.name,
+            plateNumber: v.plate_number,
+            unit: 'L' as const,
+            totalTrips: 0,
+            totalDistanceKm: 0,
+            totalFuelConsumed: 0,
+            tripFuelConsumed: 0,
+            unassignedFuelConsumed: 0,
+            totalDurationMinutes: 0,
+            avgKmPerLiter: null as number | null,
+            trips: [],
+            status: 'no_data' as const,
+          };
+        }
+      }),
+    );
+
+    const validVehicles = results.filter(
+      (r) => r.status === 'ok' && (r.totalTrips > 0 || r.totalFuelConsumed > 0),
+    );
+    const fleetAvgKmPerLiter = fleetTripFuel > 0 && fleetTotalDistance > 0
+      ? Math.round((fleetTotalDistance / fleetTripFuel) * 100) / 100
+      : null;
+
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      fleetTotals: {
+        totalTrips: fleetTotalTrips,
+        totalDistanceKm: Math.round(fleetTotalDistance * 100) / 100,
+        totalFuelConsumed: Math.round(fleetPeriodFuel * 100) / 100,
+        tripFuelConsumed: Math.round(fleetTripFuel * 100) / 100,
+        unassignedFuelConsumed: Math.round(Math.max(0, fleetPeriodFuel - fleetTripFuel) * 100) / 100,
+        totalDurationMinutes: Math.round(fleetTotalDuration * 100) / 100,
+        avgKmPerLiter: fleetAvgKmPerLiter,
+      },
+      vehicles: validVehicles.sort((a, b) => b.totalTrips - a.totalTrips),
     };
   }
 }

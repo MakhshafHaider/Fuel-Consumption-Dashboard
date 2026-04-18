@@ -17,6 +17,7 @@ const fuel_consumption_service_1 = require("./services/fuel-consumption.service"
 const fuel_stats_service_1 = require("./services/fuel-stats.service");
 const thrift_service_1 = require("./services/thrift.service");
 const theft_detection_service_1 = require("./services/theft-detection.service");
+const trip_analyzer_service_1 = require("./services/trip-analyzer.service");
 const fuel_anomaly_middleware_1 = require("../common/middleware/fuel-anomaly.middleware");
 let FuelModule = class FuelModule {
     configure(consumer) {
@@ -38,6 +39,7 @@ exports.FuelModule = FuelModule = __decorate([
             fuel_stats_service_1.FuelStatsService,
             thrift_service_1.ThriftService,
             theft_detection_service_1.TheftDetectionService,
+            trip_analyzer_service_1.TripAnalyzerService,
         ],
         exports: [
             fuel_sensor_resolver_service_1.FuelSensorResolverService,
@@ -48,6 +50,7 @@ exports.FuelModule = FuelModule = __decorate([
             fuel_stats_service_1.FuelStatsService,
             thrift_service_1.ThriftService,
             theft_detection_service_1.TheftDetectionService,
+            trip_analyzer_service_1.TripAnalyzerService,
         ],
     })
 ], FuelModule);

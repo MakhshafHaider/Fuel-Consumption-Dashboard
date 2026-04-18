@@ -6,6 +6,7 @@ import { FuelTransformService } from '../fuel/services/fuel-transform.service';
 import { DynamicTableQueryService } from '../fuel/services/dynamic-table-query.service';
 import { ThriftService } from '../fuel/services/thrift.service';
 import { TheftDetectionService } from '../fuel/services/theft-detection.service';
+import { TripAnalyzerService } from '../fuel/services/trip-analyzer.service';
 export declare class ReportsService {
     private readonly dataSource;
     private readonly config;
@@ -15,8 +16,9 @@ export declare class ReportsService {
     private readonly dynQuery;
     private readonly thriftService;
     private readonly theftDetectionService;
+    private readonly tripAnalyzerService;
     private readonly logger;
-    constructor(dataSource: DataSource, config: ConfigService, sensorResolver: FuelSensorResolverService, consumptionService: FuelConsumptionService, transform: FuelTransformService, dynQuery: DynamicTableQueryService, thriftService: ThriftService, theftDetectionService: TheftDetectionService);
+    constructor(dataSource: DataSource, config: ConfigService, sensorResolver: FuelSensorResolverService, consumptionService: FuelConsumptionService, transform: FuelTransformService, dynQuery: DynamicTableQueryService, thriftService: ThriftService, theftDetectionService: TheftDetectionService, tripAnalyzerService: TripAnalyzerService);
     parseDateRange(fromStr: string, toStr: string): {
         from: Date;
         to: Date;
@@ -316,6 +318,48 @@ export declare class ReportsService {
             alerts: never[];
             drops: never[];
             status: string;
+        })[];
+    }>;
+    getTripsReport(userId: number, fromStr: string, toStr: string): Promise<{
+        from: string;
+        to: string;
+        fleetTotals: {
+            totalTrips: number;
+            totalDistanceKm: number;
+            totalFuelConsumed: number;
+            tripFuelConsumed: number;
+            unassignedFuelConsumed: number;
+            totalDurationMinutes: number;
+            avgKmPerLiter: number | null;
+        };
+        vehicles: ({
+            imei: string;
+            name: string;
+            plateNumber: string;
+            unit: string;
+            totalTrips: number;
+            totalDistanceKm: number;
+            totalFuelConsumed: number;
+            tripFuelConsumed: number;
+            unassignedFuelConsumed: number;
+            totalDurationMinutes: number;
+            avgKmPerLiter: number | null;
+            trips: import("../fuel/services/trip-analyzer.service").Trip[];
+            status: "ok";
+        } | {
+            imei: string;
+            name: string;
+            plateNumber: string;
+            unit: "L";
+            totalTrips: number;
+            totalDistanceKm: number;
+            totalFuelConsumed: number;
+            tripFuelConsumed: number;
+            unassignedFuelConsumed: number;
+            totalDurationMinutes: number;
+            avgKmPerLiter: number | null;
+            trips: never[];
+            status: "no_data";
         })[];
     }>;
 }

@@ -73,8 +73,16 @@ export class ThriftService {
 
     const enriched = this.enrichRows(rows, sensor, imei);
 
-    const totalConsumed = this.calcTotalConsumed(enriched);
+    // Calculate both summed drops and netDrop for accuracy
+    const summedConsumed = this.calcTotalConsumed(enriched);
     const totalDistanceKm = this.calcTotalDistance(rows);
+
+    // Use the validated drop-sum from enriched rows.
+    // netDrop (firstFuel − lastFuel) was previously tried here but it
+    // comes from raw unfiltered readings and inflates wildly when a
+    // boundary reading has a sensor spike.
+    const totalConsumed = summedConsumed;
+
     const idleDrain = this.calcIdleDrain(enriched, totalConsumed);
     const highSpeedDrain = this.calcHighSpeedDrain(enriched, totalConsumed);
     const dailyTrend = this.calcDailyTrend(enriched, from, to, sensor.units || 'L');

@@ -10,6 +10,7 @@ import {
   EngineHoursReportData,
   VehicleStatusReportData,
   FleetRankingData,
+  TripsReportData,
 } from "./types";
 
 export type ReportType =
@@ -21,7 +22,8 @@ export type ReportType =
   | "thrift"
   | "engine-hours"
   | "vehicle-status"
-  | "fleet-ranking";
+  | "fleet-ranking"
+  | "trips";
 
 export interface ExportOptions {
   filename?: string;
@@ -42,6 +44,7 @@ function generateFilename(reportType: ReportType, from: string, to: string): str
     "engine-hours": "engine-hours-report",
     "vehicle-status": "vehicle-status-report",
     "fleet-ranking": "fleet-ranking-report",
+    trips: "trips-report",
   };
 
   const fromStr = formatDate(from).replace(/,/g, "").replace(/\s+/g, "-").toLowerCase();
@@ -462,6 +465,90 @@ function exportFleetRankingReport(data: FleetRankingData): XLSX.WorkSheet {
   return ws;
 }
 
+function exportTripsReport(data: TripsReportData): XLSX.WorkSheet {
+  // Create summary section
+  const summaryHeaders = [
+    "Fleet Summary",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+  ];
+
+  const summaryData = [
+    ["Total Trips", data.fleetTotals?.totalTrips ?? 0, "", "Total Distance", `${(data.fleetTotals?.totalDistanceKm ?? 0).toFixed(1)} km`, "", ""],
+    ["Total Fuel", `${(data.fleetTotals?.totalFuelConsumed ?? 0).toFixed(2)} L`, "", "Total Duration", `${Math.round((data.fleetTotals?.totalDurationMinutes ?? 0) / 60)} hrs`, "", ""],
+    ["Avg Efficiency", data.fleetTotals?.avgKmPerLiter ? `${data.fleetTotals.avgKmPerLiter.toFixed(1)} km/L` : "—", "", "", "", "", ""],
+    ["", "", "", "", "", "", ""], // Empty row
+  ];
+
+  // Trip details headers
+  const headers = [
+    "Trip ID",
+    "Vehicle Name",
+    "Plate Number",
+    "Start Time",
+    "End Time",
+    "Duration",
+    "Distance (km)",
+    "Fuel Start (L)",
+    "Fuel End (L)",
+    "Fuel Used (L)",
+    "Efficiency (km/L)",
+    "Max Speed (km/h)",
+    "Avg Speed (km/h)",
+  ];
+
+  // Flatten all trips from all vehicles
+  const rows: any[] = [];
+  data.vehicles?.forEach((vehicle) => {
+    vehicle.trips?.forEach((trip) => {
+      rows.push([
+        trip.tripId,
+        vehicle.name,
+        vehicle.plateNumber,
+        formatDateTime(trip.startTime),
+        formatDateTime(trip.endTime),
+        `${Math.floor(trip.durationMinutes / 60)}h ${Math.round(trip.durationMinutes % 60)}m`,
+        trip.distanceKm?.toFixed(1) ?? "0.0",
+        trip.fuelAtStart?.toFixed(1) ?? "0.0",
+        trip.fuelAtEnd?.toFixed(1) ?? "0.0",
+        trip.fuelConsumed?.toFixed(2) ?? "0.00",
+        trip.kmPerLiter?.toFixed(1) ?? "—",
+        trip.maxSpeed?.toFixed(0) ?? "0",
+        trip.avgSpeed?.toFixed(0) ?? "0",
+      ]);
+    });
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet([
+    summaryHeaders,
+    ...summaryData,
+    headers,
+    ...rows,
+  ]);
+
+  ws["!cols"] = [
+    { wch: 10 },
+    { wch: 20 },
+    { wch: 15 },
+    { wch: 20 },
+    { wch: 20 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 16 },
+  ];
+
+  return ws;
+}
+
 // ─── Main Export Function ─────────────────────────────────────────────────────
 
 export async function exportReportToExcel(
@@ -476,6 +563,7 @@ export async function exportReportToExcel(
     | EngineHoursReportData
     | VehicleStatusReportData
     | FleetRankingData
+    | TripsReportData
     | null,
   from: string,
   to: string,
@@ -495,6 +583,7 @@ export async function exportReportToExcel(
     "engine-hours": "Engine Hours",
     "vehicle-status": "Vehicle Status",
     "fleet-ranking": "Fleet Ranking",
+    trips: "Trips",
   };
 
   // Generate worksheet based on report type
@@ -527,6 +616,9 @@ export async function exportReportToExcel(
       break;
     case "fleet-ranking":
       ws = exportFleetRankingReport(data as FleetRankingData);
+      break;
+    case "trips":
+      ws = exportTripsReport(data as TripsReportData);
       break;
     default:
       throw new Error(`Unknown report type: ${reportType}`);

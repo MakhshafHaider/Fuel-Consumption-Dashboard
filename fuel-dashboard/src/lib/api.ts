@@ -22,6 +22,7 @@ import {
   TheftReportData,
   ThriftAnalysisData,
   ThriftReportData,
+  TripsReportData,
   VehicleStatusReportData,
   VehiclesResponse,
 } from "./types";
@@ -380,4 +381,15 @@ export async function getFleetTheftReport(
 ): Promise<FleetTheftReportData> {
   const p = new URLSearchParams({ from, to });
   return request<FleetTheftReportData>(`/reports/theft?${p}`, {}, token);
+}
+
+// ─── Reports: Trips ────────────────────────────────────────────────────────────
+
+export async function getTripsReport(
+  token: string,
+  from: string,
+  to: string
+): Promise<TripsReportData> {
+  const p = new URLSearchParams({ from, to });
+  return request<TripsReportData>(`/reports/trips?${p}`, {}, token);
 }

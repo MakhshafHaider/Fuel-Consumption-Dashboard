@@ -133,19 +133,10 @@ export class DashboardService {
           v.fcr ?? '',
         );
 
-        // Use netDrop for accurate consumption (firstFuel - lastFuel)
-        // Falls back to summed drops only if netDrop is unavailable
-        const netDropValue = result.netDrop ?? 0;
-        const useNetDrop = netDropValue > 0;
-        consumed = useNetDrop ? netDropValue : result.consumed;
-
-        if (useNetDrop && netDropValue !== result.consumed) {
-          this.logger.log(
-            `[NetDrop] IMEI ${v.imei}: Using netDrop=${netDropValue}L ` +
-            `instead of summed=${result.consumed}L ` +
-            `(diff: ${(result.consumed - netDropValue).toFixed(2)}L)`,
-          );
-        }
+        // Use the validated drop-sum from FuelConsumptionService.
+        // netDrop (firstFuel − lastFuel) is derived from raw sensor readings
+        // and inflates wildly when a boundary reading has a sensor spike.
+        consumed = result.consumed;
 
         refueled = result.refueled;
         cost = result.estimatedCost;

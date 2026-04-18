@@ -377,6 +377,70 @@ export interface FleetRankingData {
   };
 }
 
+// ─── Reports: Trips ─────────────────────────────────────────────────────────
+
+export interface TripLocation {
+  lat: number;
+  lng: number;
+  address?: string;
+}
+
+export interface Trip {
+  tripId: string;
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
+  startLocation: TripLocation;
+  endLocation: TripLocation;
+  distanceKm: number;
+  fuelConsumed: number;
+  fuelAtStart: number;
+  fuelAtEnd: number;
+  kmPerLiter: number | null;
+  unit: string;
+  maxSpeed: number;
+  avgSpeed: number;
+  idleDurationMinutes: number;
+  movingDurationMinutes: number;
+}
+
+export interface TripVehicle {
+  imei: string;
+  name: string;
+  plateNumber: string;
+  unit: string;
+  totalTrips: number;
+  totalDistanceKm: number;
+  /** Full-period consumed fuel (matches Routes mass-balance). */
+  totalFuelConsumed: number;
+  /** Fuel consumed only during detected trips. */
+  tripFuelConsumed?: number;
+  /** Period fuel not attributable to detected trips (idle/theft/noise-filtered gaps). */
+  unassignedFuelConsumed?: number;
+  totalDurationMinutes: number;
+  avgKmPerLiter: number | null;
+  trips: Trip[];
+  status: "ok" | "no_data";
+}
+
+export interface TripsReportData {
+  from: string;
+  to: string;
+  fleetTotals: {
+    totalTrips: number;
+    totalDistanceKm: number;
+    /** Full-period consumed fuel (matches Routes mass-balance). */
+    totalFuelConsumed: number;
+    /** Fuel consumed only during detected trips. */
+    tripFuelConsumed?: number;
+    /** Period fuel not attributable to detected trips. */
+    unassignedFuelConsumed?: number;
+    totalDurationMinutes: number;
+    avgKmPerLiter: number | null;
+  };
+  vehicles: TripVehicle[];
+}
+
 // ─── Fuel Debug ──────────────────────────────────────────────────────────────
 
 export interface FuelDebugSample {

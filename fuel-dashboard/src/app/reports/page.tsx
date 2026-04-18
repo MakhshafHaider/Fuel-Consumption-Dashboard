@@ -13,7 +13,6 @@ import {
   Download,
   ChevronLeft,
   AlertCircle,
-  Info,
   BarChart3,
   Gauge,
   Timer,
@@ -33,6 +32,7 @@ import {
   IdleWasteReportData,
   RefuelReportData,
   ThriftReportData,
+  TripsReportData,
   VehicleStatusReportData,
   Vehicle,
 } from "@/lib/types";
@@ -47,6 +47,7 @@ import {
   getEngineHoursReport,
   getVehicleStatusReport,
   getFleetRanking,
+  getTripsReport,
 } from "@/lib/api";
 import {
   exportReportToExcel,
@@ -68,7 +69,8 @@ type ReportType =
   | "thrift"
   | "engine-hours"
   | "vehicle-status"
-  | "fleet-ranking";
+  | "fleet-ranking"
+  | "trips";
 
 interface ReportConfig {
   id: ReportType;
@@ -87,7 +89,7 @@ const REPORT_CONFIG: ReportConfig[] = [
   { id: "refuels", title: "Refueling Log", description: "Track all refueling events", icon: TrendingUp, color: "#22c55e", requiresDateRange: true, category: "fuel" },
   { id: "idle-waste", title: "Idle Analysis", description: "Fuel wasted while idling", icon: Timer, color: "#f59e0b", requiresDateRange: true, category: "performance" },
   { id: "high-speed", title: "Speed Analysis", description: "High-speed fuel consumption", icon: Zap, color: "#ef4444", requiresDateRange: true, category: "performance" },
-  { id: "daily-trend", title: "Daily Trends", description: "Daily consumption patterns", icon: BarChart3, color: "#3b82f6", requiresDateRange: true, category: "fuel" },
+  { id: "trips", title: "Trips", description: "Individual trip analysis", icon: MapPin, color: "#0ea5e9", requiresDateRange: true, category: "fuel" },
   { id: "thrift", title: "Thrift Score", description: "Vehicle efficiency rankings", icon: Gauge, color: "#8b5cf6", requiresDateRange: true, category: "performance" },
   { id: "engine-hours", title: "Engine Hours", description: "Engine runtime analysis", icon: Clock, color: "#14b8a6", requiresDateRange: true, category: "performance" },
   { id: "vehicle-status", title: "Fleet Status", description: "Real-time vehicle snapshot", icon: MapPin, color: "#6366f1", requiresDateRange: false, category: "status" },
@@ -153,11 +155,11 @@ function ReportsPage() {
   const [engineHoursData, setEngineHoursData] = useState<EngineHoursReportData | null>(null);
   const [vehicleStatusData, setVehicleStatusData] = useState<VehicleStatusReportData | null>(null);
   const [fleetRankingData, setFleetRankingData] = useState<FleetRankingData | null>(null);
+  const [tripsData, setTripsData] = useState<TripsReportData | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [vehiclesLoading, setVehiclesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [unavailableEndpoints, setUnavailableEndpoints] = useState<Set<string>>(new Set());
 
   const [exportState, dispatchExport] = useReducer(exportReducer, {
     isExporting: false,
@@ -185,6 +187,7 @@ function ReportsPage() {
         case "engine-hours": data = engineHoursData; break;
         case "vehicle-status": data = vehicleStatusData; break;
         case "fleet-ranking": data = fleetRankingData; break;
+        case "trips": data = tripsData; break;
       }
 
       if (!data) throw new Error("No data available to export");
@@ -205,7 +208,7 @@ function ReportsPage() {
     }
   }, [activeReport, consumptionData, refuelData, idleWasteData, highSpeedData,
     dailyTrendData, thriftData, engineHoursData, vehicleStatusData, fleetRankingData,
-    range.from, range.to, exportState.isExporting]);
+    tripsData, range.from, range.to, exportState.isExporting]);
 
   // ─── Load Vehicles ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -229,209 +232,72 @@ function ReportsPage() {
       try {
         switch (activeReport) {
           case "consumption":
-            try {
+            {
               const data = await getConsumptionReport(token, range.from, range.to);
               setConsumptionData(data);
-            } catch (e) {
-              if (e instanceof ApiError && e.statusCode === 404) {
-                setUnavailableEndpoints((p) => new Set(p).add("consumption"));
-                setConsumptionData({
-                  from: range.from, to: range.to,
-                  totals: { consumed: 850.4, refueled: 1800.0, cost: null },
-                  vehicles: vehicles.map((v) => ({
-                    imei: v.imei, name: v.name, plateNumber: v.plateNumber,
-                    consumed: Math.random() * 200 + 50,
-                    refueled: Math.random() * 300 + 100,
-                    estimatedCost: null,
-                    refuelEvents: Math.floor(Math.random() * 5),
-                    unit: "L", status: "ok" as const,
-                  })),
-                });
-              } else throw e;
             }
             break;
 
           case "refuels":
-            try {
+            {
               const data = await getRefuelReport(token, range.from, range.to);
               setRefuelData(data);
-            } catch (e) {
-              if (e instanceof ApiError && (e.statusCode === 404 || e.statusCode === 500)) {
-                setUnavailableEndpoints((p) => new Set(p).add("refuels"));
-                setRefuelData(null);
-              } else throw e;
             }
             break;
 
           case "idle-waste":
-            try {
+            {
               const data = await getIdleWasteReport(token, range.from, range.to);
               setIdleWasteData(data);
-            } catch (e) {
-              if (e instanceof ApiError && (e.statusCode === 404 || e.statusCode === 500)) {
-                setUnavailableEndpoints((p) => new Set(p).add("idle-waste"));
-                setIdleWasteData({
-                  from: range.from, to: range.to,
-                  fleetTotals: { idleLiters: 185.4, totalConsumed: 850.4, idlePercentage: 21.8 },
-                  vehicles: vehicles.map((v) => ({
-                    imei: v.imei, name: v.name, plateNumber: v.plateNumber,
-                    totalConsumed: Math.random() * 200 + 50,
-                    idleLiters: Math.random() * 50 + 10,
-                    idlePercentage: Math.random() * 30 + 5,
-                    unit: "L", status: "ok" as const,
-                  })),
-                });
-              } else throw e;
             }
             break;
 
           case "high-speed":
-            try {
+            {
               const data = await getHighSpeedWasteReport(token, range.from, range.to);
               setHighSpeedData(data);
-            } catch (e) {
-              if (e instanceof ApiError && (e.statusCode === 404 || e.statusCode === 500)) {
-                setUnavailableEndpoints((p) => new Set(p).add("high-speed"));
-                setHighSpeedData({
-                  from: range.from, to: range.to,
-                  speedThresholdKmh: 100,
-                  fleetTotals: { highSpeedLiters: 68.2, totalConsumed: 850.4, highSpeedPercentage: 8.0 },
-                  vehicles: vehicles.map((v) => ({
-                    imei: v.imei, name: v.name, plateNumber: v.plateNumber,
-                    totalConsumed: Math.random() * 200 + 50,
-                    highSpeedLiters: Math.random() * 30 + 5,
-                    highSpeedPercentage: Math.random() * 15 + 2,
-                    highSpeedEvents: Math.floor(Math.random() * 15),
-                    unit: "L", status: "ok" as const,
-                  })),
-                });
-              } else throw e;
             }
             break;
 
           case "daily-trend":
-            try {
+            {
               const data = await getDailyTrendReport(token, range.from, range.to);
               setDailyTrendData(data);
-            } catch (e) {
-              if (e instanceof ApiError && (e.statusCode === 404 || e.statusCode === 500)) {
-                setUnavailableEndpoints((p) => new Set(p).add("daily-trend"));
-                setDailyTrendData(null);
-              } else throw e;
             }
             break;
 
           case "thrift":
-            try {
+            {
               const data = await getThriftReport(token, range.from, range.to);
               setThriftData(data);
-            } catch (e) {
-              if (e instanceof ApiError && (e.statusCode === 404 || e.statusCode === 500)) {
-                setUnavailableEndpoints((p) => new Set(p).add("thrift"));
-                setThriftData({
-                  from: range.from, to: range.to,
-                  fleetAvgScore: 58,
-                  bestVehicle: vehicles[0] ? { imei: vehicles[0].imei, name: vehicles[0].name, thriftScore: 84, thriftRating: "excellent" } : undefined,
-                  worstVehicle: vehicles[vehicles.length - 1] ? { imei: vehicles[vehicles.length - 1].imei, name: vehicles[vehicles.length - 1].name, thriftScore: 28, thriftRating: "poor" } : undefined,
-                  vehicles: vehicles.map((v) => ({
-                    imei: v.imei, name: v.name, plateNumber: v.plateNumber,
-                    consumed: Math.random() * 200 + 50,
-                    unit: "L",
-                    kmPerLiter: Math.random() * 8 + 3,
-                    litersPer100km: Math.random() * 20 + 10,
-                    totalDistanceKm: Math.random() * 1000 + 200,
-                    idleLiters: Math.random() * 50 + 10,
-                    idlePercentage: Math.random() * 30 + 5,
-                    highSpeedLiters: Math.random() * 30 + 5,
-                    highSpeedPercentage: Math.random() * 15 + 2,
-                    thriftScore: Math.floor(Math.random() * 60) + 40,
-                    thriftRating: ["excellent", "good", "average", "poor"][Math.floor(Math.random() * 4)] as any,
-                    breakdown: {
-                      idlePenalty: -Math.floor(Math.random() * 15),
-                      overspeedPenalty: -Math.floor(Math.random() * 10),
-                      efficiencyPenalty: -Math.floor(Math.random() * 40),
-                    },
-                    status: "ok" as const,
-                  })),
-                });
-              } else throw e;
             }
             break;
 
           case "engine-hours":
-            try {
+            {
               const data = await getEngineHoursReport(token, range.from, range.to);
               setEngineHoursData(data);
-            } catch (e) {
-              if (e instanceof ApiError && (e.statusCode === 404 || e.statusCode === 500)) {
-                setUnavailableEndpoints((p) => new Set(p).add("engine-hours"));
-                setEngineHoursData({
-                  from: range.from, to: range.to,
-                  fleetTotalEngineHours: 342.5,
-                  vehicles: vehicles.map((v) => ({
-                    imei: v.imei, name: v.name, plateNumber: v.plateNumber,
-                    engineOnHours: Math.random() * 100 + 20,
-                    avgHoursPerDay: Math.random() * 10 + 2,
-                    totalSamples: Math.floor(Math.random() * 5000) + 1000,
-                    status: "ok" as const,
-                  })),
-                });
-              } else throw e;
             }
             break;
 
           case "vehicle-status":
-            try {
+            {
               const data = await getVehicleStatusReport(token);
               setVehicleStatusData(data);
-            } catch (e) {
-              if (e instanceof ApiError && (e.statusCode === 404 || e.statusCode === 500)) {
-                setUnavailableEndpoints((p) => new Set(p).add("vehicle-status"));
-                setVehicleStatusData({
-                  generatedAt: new Date().toISOString(),
-                  totalVehicles: vehicles.length,
-                  online: vehicles.filter((v) => v.status === "online").length,
-                  offline: vehicles.filter((v) => v.status === "offline").length,
-                  vehicles: vehicles.map((v) => ({
-                    imei: v.imei, name: v.name, plateNumber: v.plateNumber,
-                    status: v.status,
-                    lastSeen: v.lastSeen,
-                    minutesSinceLastSeen: Math.floor((Date.now() - new Date(v.lastSeen).getTime()) / 60000),
-                    speed: v.speed,
-                    lat: v.lat, lng: v.lng,
-                    currentFuel: null,
-                    fuelUnit: "L",
-                    device: v.device, model: v.model, simNumber: v.simNumber,
-                  })),
-                });
-              } else throw e;
             }
             break;
 
           case "fleet-ranking":
-            try {
+            {
               const data = await getFleetRanking(token, range.from, range.to);
               setFleetRankingData(data);
-            } catch (e) {
-              if (e instanceof ApiError && (e.statusCode === 404 || e.statusCode === 500)) {
-                setUnavailableEndpoints((p) => new Set(p).add("fleet-ranking"));
-                setFleetRankingData({
-                  from: range.from, to: range.to,
-                  ranking: vehicles.map((v, i) => ({
-                    rank: i + 1,
-                    imei: v.imei, name: v.name, plateNumber: v.plateNumber,
-                    kmPerLiter: Math.random() * 8 + 3,
-                    litersPer100km: Math.random() * 20 + 10,
-                    consumed: Math.random() * 200 + 50,
-                    totalDistanceKm: Math.random() * 1000 + 200,
-                    thriftScore: Math.floor(Math.random() * 60) + 40,
-                    thriftRating: ["excellent", "good", "average", "poor"][Math.floor(Math.random() * 4)] as any,
-                    badge: i === 0 ? "best" : i === vehicles.length - 1 ? "worst" : "",
-                  })),
-                  bestVehicle: vehicles[0] ? { rank: 1, name: vehicles[0].name, thriftScore: 84, badge: "best" } : undefined,
-                  worstVehicle: vehicles[vehicles.length - 1] ? { rank: vehicles.length, name: vehicles[vehicles.length - 1].name, thriftScore: 28, badge: "worst" } : undefined,
-                });
-              } else throw e;
+            }
+            break;
+
+          case "trips":
+            {
+              const data = await getTripsReport(token, range.from, range.to);
+              setTripsData(data);
             }
             break;
         }
@@ -494,7 +360,7 @@ function ReportsPage() {
 
   // ─── Check if special full-width view ───────────────────────────────────────
   const isSpecialView = useMemo(() => {
-    return ["daily-trend", "refuels", "engine-hours", "vehicle-status"].includes(activeReport);
+    return ["daily-trend", "refuels", "engine-hours", "vehicle-status", "trips"].includes(activeReport);
   }, [activeReport]);
 
   // ─── Memoized Main Content ────────────────────────────────────────────────────
@@ -518,19 +384,8 @@ function ReportsPage() {
       );
     }
 
-    const isMock = unavailableEndpoints.has(activeReport);
-
     return (
       <div className="h-full flex flex-col gap-3">
-        {isMock && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg flex-shrink-0" style={{ background: "#FEF3C7", border: "1px solid #FDE68A" }}>
-            <Info size={16} style={{ color: "#D97706" }} />
-            <span className="text-xs" style={{ color: "#92400E" }}>
-              Using demo data (API endpoint unavailable)
-            </span>
-          </div>
-        )}
-
         <ReportKpiCards
           activeReport={activeReport}
           loading={loading}
@@ -550,6 +405,7 @@ function ReportsPage() {
             refuelData={refuelData}
             engineHoursData={engineHoursData}
             vehicleStatusData={vehicleStatusData}
+            tripsData={tripsData}
             vehicles={vehicles}
           />
         ) : (
@@ -582,7 +438,7 @@ function ReportsPage() {
         )}
       </div>
     );
-  }, [error, activeReport, loading, unavailableEndpoints, consumptionData, idleWasteData, thriftData, fleetRankingData, highSpeedData, vehicles.length, isSpecialView, dailyTrendData, refuelData, engineHoursData, vehicleStatusData, renderComparison, renderHeatmap]);
+  }, [error, activeReport, loading, consumptionData, idleWasteData, thriftData, fleetRankingData, highSpeedData, vehicles.length, isSpecialView, dailyTrendData, refuelData, engineHoursData, vehicleStatusData, tripsData, renderComparison, renderHeatmap]);
 
   if (authLoading) {
     return (

@@ -22,6 +22,11 @@ const MONTHS = [
 const toMidnight = (iso: string) => toLocalMidnight(iso);
 const fmtDisplay  = (iso: string) => fmtDateDisplay(iso);
 
+function toLocalEndOfDayISO(day: Date): string {
+  const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999);
+  return end.toISOString();
+}
+
 export default function DateRangePicker({
   className,
   from,
@@ -31,6 +36,7 @@ export default function DateRangePicker({
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
@@ -76,7 +82,12 @@ export default function DateRangePicker({
   // Close on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      // Check if click is inside wrapper OR inside dropdown (portal)
+      const isInsideWrap = wrapRef.current?.contains(target);
+      const isInsideDropdown = dropdownRef.current?.contains(target);
+
+      if (!isInsideWrap && !isInsideDropdown) {
         setOpen(false);
         setSelecting("from");
         setHovered(null);
@@ -101,15 +112,16 @@ export default function DateRangePicker({
   }
 
   function handleDayClick(day: Date) {
-    const iso = day.toISOString();
+    const fromIso = day.toISOString();
+    const toIso = toLocalEndOfDayISO(day);
 
     if (selecting === "from") {
-      onFromChange(iso);
-      if (day >= toDate) onToChange(iso);
+      onFromChange(fromIso);
+      if (day >= toDate) onToChange(toIso);
       setSelecting("to");
     } else {
       if (day < fromDate) return;
-      onToChange(iso);
+      onToChange(toIso);
       setSelecting("from");
       setOpen(false);
       setHovered(null);
@@ -178,6 +190,7 @@ export default function DateRangePicker({
       {open && mounted &&
         createPortal(
           <div
+            ref={dropdownRef}
             className="fixed bg-white rounded-2xl shadow-2xl p-5 w-[320px] border border-gray-100"
             style={{
               top: dropdownPos.top,
