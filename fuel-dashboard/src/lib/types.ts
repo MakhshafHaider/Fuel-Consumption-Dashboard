@@ -55,6 +55,7 @@ export interface FuelCurrentData {
   speed: number;
   lat: number;
   lng: number;
+  ignitionOn?: boolean;
 }
 
 // ─── Fuel history ──────────────────────────────────────────────────────────

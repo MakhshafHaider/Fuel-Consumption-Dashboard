@@ -399,6 +399,21 @@ export default function RoutesPage() {
   } else {
     totalDropped = confirmedDrops.reduce((s, e) => s + e.amount, 0);
   }
+  // Keep existing mass-balance behavior, but suppress tiny sensor oscillation
+  // when vehicle is effectively off and there are no real fuel events.
+  const isIgnitionOff = currentFuel?.ignitionOn === false;
+  const isStationary = (currentFuel?.speed ?? 0) <= 0;
+  const isVehicleOffline = selectedVehicle?.status === "offline";
+  const hasSignificantFuelEvent = confirmedDropCount > 0 || refuelCount > 0;
+  const FLUCTUATION_DEADBAND_L = 0.5;
+  if (
+    !hasSignificantFuelEvent &&
+    totalDropped > 0 &&
+    totalDropped < FLUCTUATION_DEADBAND_L &&
+    (isIgnitionOff || (isVehicleOffline && isStationary))
+  ) {
+    totalDropped = 0;
+  }
   const netChange = totalRefueled - totalDropped;
 
   // Fuel level estimation for the ring (same calc as in RouteMap).
