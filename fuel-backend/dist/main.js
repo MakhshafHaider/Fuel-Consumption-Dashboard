@@ -10,6 +10,7 @@ async function bootstrap() {
         logger: ['log', 'warn', 'error', 'debug'],
     });
     app.enableCors();
+    app.setGlobalPrefix('api');
     app.useGlobalPipes(new common_1.ValidationPipe({
         whitelist: true,
         forbidNonWhitelisted: false,
