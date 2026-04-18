@@ -412,7 +412,7 @@ export class FuelConsumptionService {
             this.logger.warn(
               `[RISE] IMEI ${imei} at ${baselineTs.toISOString()}: ` +
               `FAKE SPIKE — fuel rose ${totalAdded.toFixed(2)}L to peak=${peakFuel.toFixed(2)} ` +
-              `but fell back within consolidation window`,
+              `but fell back within consolidation window (< baselineFuel + ${RISE_THRESHOLD}L)`,
             );
           }
           const fakeRise = falledBackInConsolidation || isFakeRise(baselineTs, transformed);
@@ -424,11 +424,21 @@ export class FuelConsumptionService {
             !fakeRise && isRecoveryRise(baselineTs, baselineFuel, peakFuel, transformed);
 
           // ── Layer C: isPostRefuelFallback (mirrors Python post-refuel verify) ──
-          // 7 min after the rise window, if fuel fell back > 3.5 L from peak → fake.
+          // Anchored to the END of the consolidation window so the post-verify
+          // window [+7 min, +14 min] starts AFTER peak tracking is complete.
+          // Using baselineTs here was wrong: that put the post window inside the
+          // consolidation window where fuel is still rising / settling.
+          const consolidationEndTs = new Date(consolidationEndMs);
           const postFallback =
             !fakeRise &&
             !recoveryRise &&
-            isPostRefuelFallback(baselineTs, peakFuel, transformed);
+            isPostRefuelFallback(consolidationEndTs, peakFuel, transformed);
+
+          this.logger.log(
+            `[RISE] IMEI ${imei} at ${baselineTs.toISOString()}: ` +
+            `added=${totalAdded.toFixed(2)}L peak=${peakFuel.toFixed(2)}L ` +
+            `fakeRise=${fakeRise} recoveryRise=${recoveryRise} postFallback=${postFallback}`,
+          );
 
           if (!fakeRise && !recoveryRise && !postFallback) {
             refuels.push({

@@ -8,7 +8,7 @@ export declare const RISE_RECOVERY_LOOKBACK_MINUTES = 7;
 export declare const RISE_THRESHOLD = 8;
 export declare const RISE_GATING_MAX_SPEED_KMH = 10;
 export declare const REFUEL_CONSOLIDATION_MINUTES = 15;
-export declare const POST_REFUEL_VERIFY_EPS_LITERS = 3.5;
+export declare const POST_REFUEL_VERIFY_EPS_LITERS = 8;
 export interface FuelReading {
     ts: Date;
     fuel: number;

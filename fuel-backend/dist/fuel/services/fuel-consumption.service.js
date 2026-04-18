@@ -204,13 +204,17 @@ let FuelConsumptionService = FuelConsumptionService_1 = class FuelConsumptionSer
                     if (falledBackInConsolidation) {
                         this.logger.warn(`[RISE] IMEI ${imei} at ${baselineTs.toISOString()}: ` +
                             `FAKE SPIKE — fuel rose ${totalAdded.toFixed(2)}L to peak=${peakFuel.toFixed(2)} ` +
-                            `but fell back within consolidation window`);
+                            `but fell back within consolidation window (< baselineFuel + ${fuel_drop_filter_util_1.RISE_THRESHOLD}L)`);
                     }
                     const fakeRise = falledBackInConsolidation || (0, fuel_drop_filter_util_1.isFakeRise)(baselineTs, transformed);
                     const recoveryRise = !fakeRise && (0, fuel_drop_filter_util_1.isRecoveryRise)(baselineTs, baselineFuel, peakFuel, transformed);
+                    const consolidationEndTs = new Date(consolidationEndMs);
                     const postFallback = !fakeRise &&
                         !recoveryRise &&
-                        (0, fuel_drop_filter_util_1.isPostRefuelFallback)(baselineTs, peakFuel, transformed);
+                        (0, fuel_drop_filter_util_1.isPostRefuelFallback)(consolidationEndTs, peakFuel, transformed);
+                    this.logger.log(`[RISE] IMEI ${imei} at ${baselineTs.toISOString()}: ` +
+                        `added=${totalAdded.toFixed(2)}L peak=${peakFuel.toFixed(2)}L ` +
+                        `fakeRise=${fakeRise} recoveryRise=${recoveryRise} postFallback=${postFallback}`);
                     if (!fakeRise && !recoveryRise && !postFallback) {
                         refuels.push({
                             at: baselineTs.toISOString(),

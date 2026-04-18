@@ -72,11 +72,16 @@ export const RISE_GATING_MAX_SPEED_KMH = 10.0;
 export const REFUEL_CONSOLIDATION_MINUTES = 15;
 
 /**
- * Mirrors Python POST_REFUEL_VERIFY_EPS_LITERS = 3.5.
- * After the stabilisation window, if fuel fell back more than this from the
- * peak, treat the rise as a fake jerk / sensor spike.
+ * Mirrors Python POST_REFUEL_VERIFY_EPS_LITERS = 3.5 but raised to 8.0 here.
+ *
+ * The post-verify window starts AFTER consolidation ends (15 min after the
+ * first rise reading). During those 15 + 7 = 22 min of post-peak time a
+ * parked vehicle with its engine idling can consume 2–4 L and sensor noise
+ * can add another ±3–4 L, so a 3.5 L epsilon causes false rejections for
+ * genuine large refuels. 8.0 L provides a safe margin while still catching
+ * fake spikes that fall back by 8 L or more from their peak.
  */
-export const POST_REFUEL_VERIFY_EPS_LITERS = 3.5;
+export const POST_REFUEL_VERIFY_EPS_LITERS = 8.0;
 
 // ─── Typed row ────────────────────────────────────────────────────────────────
 

@@ -18,7 +18,7 @@ exports.RISE_RECOVERY_LOOKBACK_MINUTES = 7;
 exports.RISE_THRESHOLD = 8.0;
 exports.RISE_GATING_MAX_SPEED_KMH = 10.0;
 exports.REFUEL_CONSOLIDATION_MINUTES = 15;
-exports.POST_REFUEL_VERIFY_EPS_LITERS = 3.5;
+exports.POST_REFUEL_VERIFY_EPS_LITERS = 8.0;
 function applyMedianFilter(readings, windowSize = exports.FUEL_MEDIAN_SAMPLES) {
     if (windowSize < 2 || readings.length === 0)
         return readings;

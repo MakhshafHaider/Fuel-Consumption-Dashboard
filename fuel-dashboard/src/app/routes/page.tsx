@@ -352,15 +352,25 @@ export default function RoutesPage() {
   const selectedVehicle   = vehicles.find(v => v.imei === selectedImei);
 
   // First derive the base fuel event categories
-  const drops             = fuelEvents.filter(e => e.type === "drop");
-  // Filter out anomalous refuels (fake spikes) from stats
-  const refuels           = fuelEvents.filter(e => e.type === "refuel" && !e.isAnomaly);
+  const drops = fuelEvents.filter(e => e.type === "drop");
+  // Filter refuels: include if (a) not anomalous, OR (b) significant amount (>50L)
+  // The backend's anomaly detection is too aggressive - large refuels are typically real
+  const isLegitimateRefuel = (e: FuelEvent) => {
+    if (e.type !== "refuel") return false;
+    // Always include non-anomalous refuels
+    if (!e.isAnomaly) return true;
+    // For anomalous refuels, only include if significant (>50L) and not a fake spike
+    const amount = e.amount || 0;
+    const isFakeSpike = e.anomalyType === "fake_spike" || e.anomalyType === "voltage_glitch";
+    return amount >= 50 && !isFakeSpike;
+  };
+  const refuels = fuelEvents.filter(isLegitimateRefuel);
 
-  const filteredEvents    = fuelEvents.filter(e => {
+  const filteredEvents = fuelEvents.filter(e => {
     // Never show noise / normal-consumption drops — only confirmed drop alerts
     if (e.type === "drop" && !e.isConfirmedDrop) return false;
-    // Filter out anomalous refuels (fake spikes)
-    if (e.type === "refuel" && e.isAnomaly) return false;
+    // Only show legitimate refuels (hide small anomalous ones)
+    if (e.type === "refuel" && !isLegitimateRefuel(e)) return false;
     return activeFilter === "all" ? true : activeFilter === "drops" ? e.type === "drop" : e.type === "refuel";
   });
 
@@ -371,10 +381,12 @@ export default function RoutesPage() {
   const refuelCount       = refuels.length;
   const confirmedDropTotal= confirmedDrops.reduce((s, e) => s + e.amount, 0);
 
-  // Calculate actual fuel consumption correctly accounting for refuels.
-  // Formula: Consumption = (firstFuel + totalRefueled) - lastFuel
-  // This gives the true fuel burned: start level + what was added - what's left now
-  const totalRefueled = consumption?.refueled ?? refuels.reduce((s, e) => s + e.amount, 0);
+  // Calculate total refueled from legitimate refuels only (anomalous already filtered out)
+  const totalRefueledFromEvents = refuels.reduce((s, e) => s + (e.amount || 0), 0);
+  // Fallback to API value if we have no refuel events
+  const totalRefueled = totalRefueledFromEvents > 0
+    ? totalRefueledFromEvents
+    : (consumption?.refueled ?? 0);
   const firstFuel = consumption?.firstFuel ?? null;
   const lastFuel = consumption?.lastFuel ?? null;
 
@@ -837,7 +849,7 @@ export default function RoutesPage() {
                     </div>
                     <div>
                       <p style={{ fontSize: 9, color: "rgba(255,255,255,0.7)" }}>Refueled</p>
-                      <p style={{ fontSize: 14, fontWeight: 800, color: "white" }}>+{(consumption.refueled ?? 0).toFixed(1)} L</p>
+                      <p style={{ fontSize: 14, fontWeight: 800, color: "white" }}>+{(totalRefueled ?? 0).toFixed(1)} L</p>
                     </div>
                  
                   </div>
