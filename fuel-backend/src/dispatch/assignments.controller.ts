@@ -32,6 +32,11 @@ import {
   SetRemarkDto,
 } from './dto/dispatch.dto';
 import { assertManagerTransition } from './services/status.util';
+import {
+  DEFAULT_DISPATCH_TZ,
+  startOfLocalDay,
+} from './services/local-day.util';
+import { ConfigService } from '@nestjs/config';
 
 /** Manager-facing dispatch: create, list, monitor and control assignments. */
 @Controller('assignments')
@@ -47,6 +52,7 @@ export class AssignmentsController {
     private readonly stopCompletions: StopCompletionRepository,
     private readonly settings: ManagerSettingsRepository,
     private readonly dynQuery: DynamicTableQueryService,
+    private readonly config: ConfigService,
   ) {}
 
   @Post()
@@ -70,9 +76,32 @@ export class AssignmentsController {
     return { success: true, message: 'Assignment created', data };
   }
 
+  /**
+   * `scope=today` limits the board to runs belonging to the current local day
+   * (plus anything still in progress). Older runs stay reachable through the
+   * reports, which are already date-ranged — this stops the dispatch list
+   * growing without bound as months of history accumulate.
+   *
+   * The default stays unscoped so other consumers, including the fleet monitor
+   * below, keep seeing every open job.
+   */
   @Get()
-  async list(@Request() req: any, @Query('status') status?: string) {
-    const data = await this.assignments.list(req.user.id, { status });
+  async list(
+    @Request() req: any,
+    @Query('status') status?: string,
+    @Query('scope') scope?: string,
+  ) {
+    const runOnOrAfter =
+      scope === 'today'
+        ? startOfLocalDay(
+            new Date(),
+            this.config.get<string>('DISPATCH_TZ', DEFAULT_DISPATCH_TZ),
+          )
+        : undefined;
+    const data = await this.assignments.list(req.user.id, {
+      status,
+      runOnOrAfter,
+    });
     return { success: true, message: `${data.length} assignment(s)`, data };
   }
 

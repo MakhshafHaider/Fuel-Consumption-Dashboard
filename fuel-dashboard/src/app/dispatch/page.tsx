@@ -39,6 +39,12 @@ export default function DispatchPage() {
   const [drivers, setDrivers] = useState<DriverRecord[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  /**
+   * Which days the board covers. "today" is the operational default; "all" is
+   * an escape hatch so a job left open on an earlier day is still reachable
+   * rather than silently stranded.
+   */
+  const [dateScope, setDateScope] = useState<"today" | "all">("today");
   const [monitorId, setMonitorId] = useState<number | null>(null);
   const [viewRoute, setViewRoute] = useState<RouteDetail | null>(null);
   const [editRoute, setEditRoute] = useState<RouteDetail | null>(null);
@@ -62,12 +68,14 @@ export default function DispatchPage() {
       const [r, imp, d, v, a, s] = await Promise.all([
         getRoutes(token), getImportableRoutes(token), getDrivers(token),
         getVehicles(token, false).then((x) => x.vehicles).catch(() => []),
-        getAssignments(token), getSettings(token),
+        // Today's work only — the board is an operational view, not an archive.
+        // Past runs live in Reports, which are already date-ranged.
+        getAssignments(token, { scope: dateScope }), getSettings(token),
       ]);
       setRoutes(r); setImportable(imp); setDrivers(d); setVehicles(v); setAssignments(a);
       setRequirePhoto(s.requireBinPhoto);
     }, "Failed to load dispatch data");
-  }, [token, run]);
+  }, [token, run, dateScope]);
 
   async function togglePhoto() {
     if (!token) return;
@@ -251,6 +259,8 @@ export default function DispatchPage() {
             drivers={drivers}
             vehicles={vehicles}
             assignments={assignments}
+            dateScope={dateScope}
+            onDateScopeChange={setDateScope}
             onChange={reload}
             onMonitor={setMonitorId}
             run={run}
@@ -458,12 +468,33 @@ function TextInput({ value, onChange, placeholder }: { value: string; onChange: 
   );
 }
 
+/**
+ * Assignment status filter. Mirrors the forward-only lifecycle in
+ * `status.util.ts`; `cancelled` is deliberately omitted because cancelled
+ * assignments are filtered out server-side and never appear here.
+ */
+const STATUS_FILTERS: Array<{ id: string; label: string }> = [
+  { id: "assigned", label: "Assigned" },
+  { id: "accepted", label: "Accepted" },
+  { id: "en_route", label: "En route" },
+  { id: "arrived", label: "Arrived" },
+  { id: "completed", label: "Completed" },
+  { id: "all", label: "All" },
+];
+
 function AssignmentsPanel({
-  token, routes, drivers, vehicles, assignments, onChange, onMonitor, run, toast,
+  token, routes, drivers, vehicles, assignments, dateScope, onDateScopeChange,
+  onChange, onMonitor, run, toast,
 }: {
   token: string; routes: RouteSummary[]; drivers: DriverRecord[]; vehicles: Vehicle[];
-  assignments: Assignment[]; onChange: () => void; onMonitor: (id: number) => void; run: RunFn; toast: ToastApi;
+  assignments: Assignment[]; dateScope: "today" | "all";
+  onDateScopeChange: (scope: "today" | "all") => void;
+  onChange: () => void; onMonitor: (id: number) => void; run: RunFn; toast: ToastApi;
 }) {
+  // Defaults to "assigned": the jobs waiting to be picked up are what a
+  // dispatcher acts on, and persistent routes land back here each morning when
+  // the daily rollover reopens them.
+  const [statusFilter, setStatusFilter] = useState<string>("assigned");
   const [routeId, setRouteId] = useState("");
   const [driverId, setDriverId] = useState("");
   const [imei, setImei] = useState("");
@@ -491,6 +522,20 @@ function AssignmentsPanel({
     assigned: "accepted", accepted: "en_route", en_route: "arrived", arrived: "completed",
     completed: null, cancelled: null,
   };
+
+  // Filtered client-side: the list is already loaded, so switching is instant and
+  // every option can show its live count. `cancelled` is absent by design —
+  // cancelled assignments are excluded server-side and never reach this list.
+  const counts = STATUS_FILTERS.reduce<Record<string, number>>((acc, f) => {
+    acc[f.id] = f.id === "all"
+      ? assignments.length
+      : assignments.filter((a) => a.status === f.id).length;
+    return acc;
+  }, {});
+
+  const visible = statusFilter === "all"
+    ? assignments
+    : assignments.filter((a) => a.status === statusFilter);
 
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : null);
 
@@ -540,11 +585,96 @@ function AssignmentsPanel({
         </div>
       </div>
 
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: "var(--color-border)" }}>
+          {(["today", "all"] as const).map((scope) => (
+            <button
+              key={scope}
+              onClick={() => onDateScopeChange(scope)}
+              aria-pressed={dateScope === scope}
+              className="px-2.5 py-1.5 text-xs font-semibold transition-all"
+              style={{
+                background: dateScope === scope ? "var(--color-text-1, #111827)" : "white",
+                color: dateScope === scope ? "white" : "var(--color-text-3)",
+              }}
+            >
+              {scope === "today" ? "Today" : "All dates"}
+            </button>
+          ))}
+        </div>
+        <span className="text-[11px] mr-1" style={{ color: "var(--color-text-3)" }}>
+          {dateScope === "today"
+            ? "Showing today's runs — use Reports for previous dates"
+            : "Showing every open run, including earlier days"}
+        </span>
+      </div>
+
+      {assignments.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {STATUS_FILTERS.map((f) => {
+            const active = statusFilter === f.id;
+            const count = counts[f.id] ?? 0;
+            return (
+              <button
+                key={f.id}
+                onClick={() => setStatusFilter(f.id)}
+                aria-pressed={active}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
+                disabled={count === 0 && !active}
+                style={{
+                  background: active ? "var(--color-primary)" : "white",
+                  color: active ? "white" : "var(--color-text-2)",
+                  border: active ? "none" : "1px solid var(--color-border)",
+                }}
+              >
+                {f.id !== "all" && (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{
+                      background: active ? "rgba(255,255,255,0.8)" : ASSIGNMENT_STATUS_COLORS[f.id],
+                    }}
+                  />
+                )}
+                {f.label}
+                <span
+                  className="px-1.5 rounded-full text-[10px] font-bold"
+                  style={{
+                    background: active ? "rgba(255,255,255,0.25)" : "#F3F4F6",
+                    color: active ? "white" : "var(--color-text-3)",
+                  }}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {assignments.length === 0 ? (
-        <p className="text-sm text-gray-400">No assignments yet. Dispatch a route to a driver above.</p>
+        <p className="text-sm text-gray-400">
+          {dateScope === "today"
+            ? "No assignments for today. Dispatch a route above, or switch to All dates."
+            : "No assignments yet. Dispatch a route to a driver above."}
+        </p>
+      ) : visible.length === 0 ? (
+        // The list is not empty — this status just has nothing in it. Say so,
+        // otherwise the default filter looks like the assignments disappeared.
+        <p className="text-sm text-gray-400">
+          No{" "}
+          {STATUS_FILTERS.find((f) => f.id === statusFilter)?.label.toLowerCase()}{" "}
+          assignments.{" "}
+          <button
+            onClick={() => setStatusFilter("all")}
+            className="font-semibold underline"
+            style={{ color: "var(--color-primary)" }}
+          >
+            Show all {assignments.length}
+          </button>
+        </p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {assignments.map((a) => (
+          {visible.map((a) => (
             <div key={a.assignmentId} className="rounded-xl p-3 border bg-white" style={{ borderColor: "var(--color-border)" }}>
               <div className="flex items-start justify-between">
                 <div className="min-w-0">

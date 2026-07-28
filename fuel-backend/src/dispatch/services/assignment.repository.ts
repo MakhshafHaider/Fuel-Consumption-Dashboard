@@ -142,7 +142,7 @@ export class AssignmentRepository {
    */
   async list(
     userId: number,
-    opts: { status?: string } = {},
+    opts: { status?: string; runOnOrAfter?: Date } = {},
   ): Promise<AssignmentRecord[]> {
     const params: any[] = [userId];
     let where = `a.user_id = ?`;
@@ -151,6 +151,19 @@ export class AssignmentRepository {
       params.push(opts.status);
     } else {
       where += ` AND a.status <> 'cancelled'`;
+    }
+    if (opts.runOnOrAfter) {
+      // The dispatch board is today's work; history belongs in the reports.
+      //
+      // A run's day is `run_started_at` (re-stamped by every reset, so a
+      // persistent route is always "today"), falling back through the older
+      // timestamps for rows that predate that column. Jobs still being worked
+      // are kept regardless of when they began — a shift that crossed midnight
+      // must not vanish from the board while the driver is still driving it.
+      where +=
+        ` AND (COALESCE(a.run_started_at, a.started_at, a.assigned_at, a.created_at) >= ?` +
+        `      OR a.status IN ('accepted','en_route','arrived'))`;
+      params.push(opts.runOnOrAfter);
     }
     const rows = await this.ds.query(
       `${SELECT_FULL} WHERE ${where} ORDER BY a.created_at DESC`,
@@ -220,6 +233,37 @@ export class AssignmentRepository {
       [userId, imei, to, from],
     );
     return rows.map((r: any) => this.map(r));
+  }
+
+  /**
+   * Persistent assignments whose current run began before `cutoff` — i.e. runs
+   * left over from an earlier day, which the daily rollover should reopen.
+   *
+   * `last_completion_at` comes along so the caller can tell an abandoned run
+   * from one a driver is still working through; resetting the latter would
+   * throw away bins they just finished.
+   */
+  async listPersistentRunsStartedBefore(
+    cutoff: Date,
+  ): Promise<Array<AssignmentRecord & { lastCompletionAt: Date | null }>> {
+    const rows = await this.ds.query(
+      `SELECT a.*, r.name AS route_name, d.driver_name, o.name AS vehicle_name,
+              (SELECT MAX(c.created_at) FROM fd_stop_completions c
+                WHERE c.assignment_id = a.assignment_id) AS last_completion_at
+       FROM fd_assignments a
+       LEFT JOIN fd_routes r ON r.route_id = a.route_id
+       LEFT JOIN gs_user_object_drivers d ON d.driver_id = a.driver_id
+       LEFT JOIN gs_objects o ON o.imei = a.imei
+       WHERE a.persistent = 1
+         AND a.status <> 'cancelled'
+         AND (a.run_started_at IS NULL OR a.run_started_at < ?)
+       ORDER BY a.assignment_id ASC`,
+      [cutoff],
+    );
+    return rows.map((r: any) => ({
+      ...this.map(r),
+      lastCompletionAt: r.last_completion_at ?? null,
+    }));
   }
 
   /** All assignments currently being executed — used by the monitoring cron. */

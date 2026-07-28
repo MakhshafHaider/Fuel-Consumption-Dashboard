@@ -332,8 +332,22 @@ export async function uploadKmlRoute(
 
 // ─── Manager: assignments ──────────────────────────────────────────────────────
 
-export const getAssignments = (token: string, status?: string) =>
-  request<Assignment[]>(`/assignments${status ? `?status=${status}` : ""}`, {}, token);
+/**
+ * `scope: "today"` limits the result to runs belonging to the current local
+ * day, plus anything still in progress. The dispatch board uses it so the list
+ * stays today's work instead of growing with every past run; history is reached
+ * through the date-ranged reports.
+ */
+export const getAssignments = (
+  token: string,
+  opts: { status?: string; scope?: "today" | "all" } = {},
+) => {
+  const qs = new URLSearchParams();
+  if (opts.status) qs.set("status", opts.status);
+  if (opts.scope === "today") qs.set("scope", "today");
+  const suffix = qs.toString();
+  return request<Assignment[]>(`/assignments${suffix ? `?${suffix}` : ""}`, {}, token);
+};
 
 export const createAssignment = (
   token: string,

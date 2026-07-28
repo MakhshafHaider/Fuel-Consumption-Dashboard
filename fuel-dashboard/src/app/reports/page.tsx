@@ -619,9 +619,16 @@ function ReportsPage() {
 
   return (
     <AppShell>
-        {/* Premium Header */}
+        {/* Premium Header.
+            `relative z-20` is load-bearing, not decoration. The backdrop-filter
+            below makes this element a stacking context, so the vehicle picker and
+            date picker popovers inside it cannot escape — without a z-index here
+            the header sits at z-auto and the report content, which comes later in
+            the DOM and whose cards are stacking contexts of their own, paints on
+            top of any open dropdown. 20 keeps it above the content while staying
+            under AppShell's z-30 mobile nav overlay. */}
         <div
-          className="flex-shrink-0 px-4 py-3 flex items-center justify-between"
+          className="flex-shrink-0 px-4 py-3 flex items-center justify-between relative z-20"
           style={{
             background: "rgba(255, 255, 255, 0.95)",
             backdropFilter: "blur(20px)",

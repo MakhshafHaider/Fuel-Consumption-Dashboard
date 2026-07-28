@@ -17,6 +17,7 @@ import { KmlImportService } from './services/kml-import.service';
 import { RoutePlannerService } from './services/route-planner.service';
 import { DeviationService } from './services/deviation.service';
 import { MonitoringService } from './services/monitoring.service';
+import { PersistentRunService } from './services/persistent-run.service';
 import { StopCompletionRepository } from './services/stop-completion.repository';
 import { StopCompletionService } from './services/stop-completion.service';
 import { ManagerSettingsRepository } from './services/manager-settings.repository';
@@ -48,6 +49,7 @@ import { ManagerSettingsRepository } from './services/manager-settings.repositor
     RoutePlannerService,
     DeviationService,
     MonitoringService,
+    PersistentRunService,
     StopCompletionRepository,
     StopCompletionService,
     ManagerSettingsRepository,

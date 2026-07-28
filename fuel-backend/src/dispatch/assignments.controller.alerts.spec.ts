@@ -1,5 +1,7 @@
 import { AssignmentsController } from './assignments.controller';
 
+const CONFIG = { get: (_key: string, fallback: unknown) => fallback };
+
 function makeController(fake: Partial<Record<string, any>>) {
   return new AssignmentsController(
     fake as any,      // assignments repository
@@ -10,6 +12,7 @@ function makeController(fake: Partial<Record<string, any>>) {
     null as any,      // stopCompletions
     null as any,      // settings
     null as any,      // dynQuery
+    CONFIG as any, // config
   );
 }
 
