@@ -13,8 +13,17 @@ __pycache__/
 
 # Editor / tooling / scratch
 .cursor/
+.vscode/
 .playwright-mcp/
 graphify-out/
+
+# Built mobile artifacts (the driver APK is ~18MB; build it, don't commit it)
+*.apk
+*.aab
+
+# Ad-hoc media dropped in the repo root (voice notes, screen recordings)
+*.ogg
+*.m4a
 
 # Backend runtime data & secrets (keep osrm config, drop the 2.5GB map data)
 fuel-backend/osrm/data/

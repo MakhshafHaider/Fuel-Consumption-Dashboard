@@ -761,6 +761,220 @@ export interface TheftLocationsReportData {
   events: TheftLocationEvent[];
 }
 
+// ─── Master Vehicle Report ─────────────────────────────────────────────────
+// One vehicle, one date range, everything: fuel, distance, trips, engine time,
+// theft signals, dispatch assignments with per-bin proof, and route deviations
+// with the map evidence + operator remarks behind each one.
+
+export interface MasterLatLng {
+  lat: number;
+  lng: number;
+}
+
+export interface MasterTrackPoint {
+  at: string;
+  lat: number;
+  lng: number;
+  speed: number;
+}
+
+export interface MasterDeviationEvent {
+  eventId: number;
+  type: string;
+  at: string;
+  lat: number | null;
+  lng: number | null;
+  distanceM: number | null;
+  actor: string;
+  note: string | null;
+  remark: string | null;
+}
+
+/** One sustained excursion outside the planned route corridor. */
+export interface MasterDeviationExcursion {
+  excursionId: string;
+  assignmentId: number;
+  routeName: string | null;
+  driverName: string | null;
+  startedAt: string;
+  endedAt: string;
+  durationMinutes: number;
+  maxDistanceM: number;
+  avgDistanceM: number;
+  corridorBufferM: number;
+  peak: { lat: number; lng: number; at: string };
+  /** Off-corridor portion of the actual track — the map proof. */
+  path: MasterLatLng[];
+  returnedToRoute: boolean;
+  offRouteDistanceKm: number;
+  events: MasterDeviationEvent[];
+  /** Operator remarks recorded against this deviation. */
+  remarks: string[];
+}
+
+export type MasterStopStatus = "completed" | "visited" | "skipped" | "missed";
+
+export interface MasterStop {
+  stopId: number | null;
+  seq: number;
+  name: string | null;
+  lat: number;
+  lng: number;
+  radiusM: number;
+  status: MasterStopStatus;
+  completedAt: string | null;
+  completionDistanceM: number | null;
+  inRange: boolean | null;
+  photoPath: string | null;
+  note: string | null;
+  skipRemark: string | null;
+}
+
+export interface MasterAssignment {
+  assignmentId: number;
+  routeId: number;
+  routeName: string | null;
+  driverId: number;
+  driverName: string | null;
+  status: string;
+  priority: string;
+  persistent: boolean;
+  notes: string | null;
+  scheduledStart: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  windowFrom: string;
+  windowTo: string;
+  corridorBufferM: number;
+  plannedDistanceKm: number | null;
+  depot: { name: string | null; lat: number; lng: number } | null;
+  plannedGeometry: MasterLatLng[];
+  actualTrack: MasterTrackPoint[];
+  stops: MasterStop[];
+  excursions: MasterDeviationExcursion[];
+  stats: {
+    stopsTotal: number;
+    stopsCompleted: number;
+    stopsSkipped: number;
+    stopsMissed: number;
+    completionRatePct: number;
+    distanceKm: number;
+    durationMinutes: number | null;
+    excursionCount: number;
+    maxDeviationM: number;
+    gpsFixes: number;
+    photoProofCount: number;
+  };
+}
+
+export interface MasterReportData {
+  from: string;
+  to: string;
+  generatedAt: string;
+
+  vehicle: {
+    imei: string;
+    name: string;
+    plateNumber: string;
+    model: string | null;
+    device: string | null;
+    simNumber: string | null;
+    lastSeen: string | null;
+    online: boolean;
+    fuelSensor: { name: string; param: string; unit: string } | null;
+  };
+
+  telemetry: {
+    gpsFixes: number;
+    firstFixAt: string | null;
+    lastFixAt: string | null;
+    hasFuelData: boolean;
+  };
+
+  fuel: {
+    unit: string;
+    consumed: number;
+    refueled: number;
+    refuelEventCount: number;
+    estimatedCost: number | null;
+    openingFuel: number | null;
+    closingFuel: number | null;
+    netDrop: number | null;
+    idleLiters: number;
+    idlePercentage: number;
+    highSpeedLiters: number;
+    highSpeedPercentage: number;
+    highSpeedEvents: number;
+    speedThresholdKmh: number;
+    refuels: RefuelEvent[];
+  };
+
+  distance: {
+    totalDistanceKm: number;
+    tripDistanceKm: number;
+    onAssignmentDistanceKm: number;
+    kmPerLiter: number | null;
+    maxSpeedKmh: number;
+    avgMovingSpeedKmh: number;
+  };
+
+  engine: {
+    engineOnHours: number;
+    avgHoursPerDay: number;
+    idleHours: number;
+    movingHours: number;
+    idleSharePct: number;
+  };
+
+  trips: {
+    totalTrips: number;
+    totalDistanceKm: number;
+    totalFuelConsumed: number;
+    totalDurationMinutes: number;
+    avgKmPerLiter: number | null;
+    items: Trip[];
+  };
+
+  theft: {
+    riskLevel: string;
+    riskScore: number;
+    summary: {
+      totalDrops: number;
+      normalDrops: number;
+      suspiciousDrops: number;
+      theftDrops: number;
+      totalFuelLost: number;
+      suspiciousFuelLost: number;
+      theftFuelLost: number;
+    };
+    alerts: unknown[];
+  } | null;
+
+  assignments: {
+    total: number;
+    analysed: number;
+    truncated: boolean;
+    completed: number;
+    inProgress: number;
+    notStarted: number;
+    stopsTotal: number;
+    stopsCompleted: number;
+    stopsSkipped: number;
+    stopsMissed: number;
+    completionRatePct: number;
+    photoProofCount: number;
+    items: MasterAssignment[];
+  };
+
+  deviations: {
+    total: number;
+    withRemarks: number;
+    maxDistanceM: number;
+    totalOffRouteKm: number;
+    items: MasterDeviationExcursion[];
+  };
+}
+
 // ─── Generic API wrapper ───────────────────────────────────────────────────
 
 export interface ApiResponse<T> {

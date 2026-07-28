@@ -75,7 +75,10 @@ const DashboardPage = memo(function DashboardPage() {
   useEffect(() => {
     if (!token) return;
     setLoadingVehicles(true);
-    getVehicles(token)
+    // The whole fleet, not just fuel-sensor vehicles: a truck with no sensor
+    // still has position, distance and trip data worth seeing here. The sensor
+    // fetch below already no-ops when a vehicle has none.
+    getVehicles(token, false)
       .then(d => {
         setVehicles(d.vehicles);
         if (d.vehicles[0]) setSelectedImei(d.vehicles[0].imei);

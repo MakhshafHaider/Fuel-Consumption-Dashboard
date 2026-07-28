@@ -4,7 +4,6 @@ import { DynamicTableQueryService } from '../../fuel/services/dynamic-table-quer
 import {
   AssignmentRecord,
   AssignmentRepository,
-  AssignmentStatus,
 } from './assignment.repository';
 import { RouteRepository } from './route.repository';
 import { DriverAppRepository } from './driver-app.repository';
@@ -25,6 +24,18 @@ const DEVIATION_THROTTLE_MS = 10 * 60 * 1000;
  */
 const TRACKER_STALE_MS = 3 * 60 * 1000;
 
+/**
+ * Hard ceiling on how much GPS history one evaluation may analyse.
+ *
+ * A collection run is hours; nothing legitimate needs more than a day of trail.
+ * Without this, any anchoring mistake silently grows the window forever — which
+ * is exactly how persistent assignments used to degrade: every extra day made
+ * the per-minute cron more expensive until it could no longer keep up, and the
+ * job appeared to stop being followed after a few days. The anchor is fixed
+ * (see `runStartedAt`); this clamp makes that class of bug non-fatal.
+ */
+const MAX_ANALYSIS_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class MonitoringService {
   private readonly logger = new Logger(MonitoringService.name);
@@ -38,6 +49,33 @@ export class MonitoringService {
   ) {}
 
   /**
+   * Start of the trail window for one evaluation: this run only, never more
+   * than a day.
+   *
+   * Preference order matters. `startedAt` is the tightest anchor but is null
+   * until the driver goes en route, and is cleared by every reset.
+   * `runStartedAt` covers exactly that gap — it is stamped when the assignment
+   * is created and re-stamped on each reset, so run N of a persistent
+   * assignment never sees runs 1..N-1. `createdAt` is the last resort, for rows
+   * that predate the column.
+   */
+  static analysisWindowStart(
+    assignment: Pick<
+      AssignmentRecord,
+      'startedAt' | 'runStartedAt' | 'createdAt'
+    >,
+    now: Date,
+  ): Date {
+    const anchor =
+      assignment.startedAt ?? assignment.runStartedAt ?? assignment.createdAt;
+    const anchorMs = new Date(anchor).getTime();
+    const floorMs = now.getTime() - MAX_ANALYSIS_WINDOW_MS;
+    return new Date(
+      Number.isFinite(anchorMs) ? Math.max(anchorMs, floorMs) : floorMs,
+    );
+  }
+
+  /**
    * Analyse one assignment against its vehicle's GPS trail. When `persist` is
    * set (the cron path), it also updates the live snapshot and writes
    * deviation / arrival events. Returns the analysis + planned route for the UI.
@@ -48,8 +86,8 @@ export class MonitoringService {
   ): Promise<{ analysis: DeviationAnalysis; route: any }> {
     const route = await this.routes.get(assignment.userId, assignment.routeId);
 
-    const from = assignment.startedAt ?? assignment.createdAt;
     const to = new Date();
+    const from = MonitoringService.analysisWindowStart(assignment, to);
 
     // Source 1: the vehicle's hardware GPS tracker (telematics) — the primary.
     let trackerTrail: TrailPoint[] = [];
@@ -204,13 +242,21 @@ export class MonitoringService {
       });
     }
 
-    // Geofence auto-advance: reaching the final stop flips an in-progress job to "arrived".
+    // Geofence auto-advance: reaching the final stop flips an in-progress job to
+    // "arrived".
+    //
+    // Only once the driver has actually gone en route. A job sitting in
+    // "accepted" has not been driven yet, so a final-stop hit can only come from
+    // trail that is not this run's work — the vehicle parking near the last bin,
+    // or (before the run anchor existed) a previous run bleeding into the
+    // window. Advancing on that was self-perpetuating: "arrived" is past
+    // "en_route" in the forward-only lifecycle, so the driver could never start
+    // the job, `started_at` was never stamped, and phone GPS never began.
     const lastStop: any = route.stops[route.stops.length - 1];
-    const advanceable: AssignmentStatus[] = ['accepted', 'en_route'];
     if (
       lastStop &&
-      analysis.visitedStopSeqs.includes(lastStop.seq) &&
-      advanceable.includes(assignment.status)
+      assignment.status === 'en_route' &&
+      analysis.visitedStopSeqs.includes(lastStop.seq)
     ) {
       await this.assignments.setStatus(
         assignment.assignmentId,

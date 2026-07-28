@@ -17,6 +17,7 @@ import {
   IdleWasteReportData,
   Interval,
   LoginResponse,
+  MasterReportData,
   RefuelEventsData,
   RefuelReportData,
   TheftReportData,
@@ -42,10 +43,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Per-call overrides for genuinely expensive endpoints. */
+export interface RequestTuning {
+  /** Abort after this long instead of the 30s default. */
+  timeoutMs?: number;
+  /**
+   * Disable the automatic GET retry. Essential for heavy analytical endpoints:
+   * retrying a query that timed out because it was slow just runs the same
+   * expensive work again, tripling the database load at the worst moment.
+   */
+  noRetry?: boolean;
+}
+
 export async function request<T>(
   path: string,
   options: RequestInit = {},
-  token?: string | null
+  token?: string | null,
+  tuning: RequestTuning = {}
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -53,13 +67,14 @@ export async function request<T>(
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
+  const timeoutMs = tuning.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const method = (options.method ?? "GET").toUpperCase();
-  const canRetry = method === "GET";
+  const canRetry = method === "GET" && !tuning.noRetry;
   const maxAttempts = canRetry ? MAX_GET_RETRIES + 1 : 1;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     let res: Response;
     try {
@@ -447,4 +462,27 @@ export async function getTripsReport(
 ): Promise<TripsReportData> {
   const p = new URLSearchParams({ from, to });
   return request<TripsReportData>(`/reports/trips?${p}`, {}, token);
+}
+
+// ─── Reports: Master (single vehicle, everything) ──────────────────────────────
+
+/**
+ * GET /reports/master
+ * Full dossier for ONE vehicle over a date range: fuel, distance, trips,
+ * engine time, theft signals, dispatch assignments with per-bin proof, and
+ * route deviations with map evidence + operator remarks.
+ */
+export async function getMasterReport(
+  token: string,
+  imei: string,
+  from: string,
+  to: string
+): Promise<MasterReportData> {
+  const p = new URLSearchParams({ imei, from, to });
+  // Full-range telemetry scan + trip, theft and deviation analysis: minutes are
+  // possible on a wide range, and a retry would only re-run the same heavy work.
+  return request<MasterReportData>(`/reports/master?${p}`, {}, token, {
+    timeoutMs: 5 * 60_000,
+    noRetry: true,
+  });
 }

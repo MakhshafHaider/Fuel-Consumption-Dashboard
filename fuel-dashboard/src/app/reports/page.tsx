@@ -18,10 +18,13 @@ import {
   Timer,
   MapPin,
   ArrowUpRight,
+  ClipboardList,
+  FileText,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import AppShell from "@/components/AppShell";
 import DateRangePicker from "@/components/DateRangePicker";
+import VehicleMultiSelect from "@/components/VehicleMultiSelect";
 import {
   ApiError,
   ConsumptionReportData,
@@ -30,6 +33,7 @@ import {
   FleetRankingData,
   HighSpeedWasteReportData,
   IdleWasteReportData,
+  MasterReportData,
   RefuelReportData,
   TheftLocationsReportData,
   ThriftReportData,
@@ -50,16 +54,24 @@ import {
   getFleetRanking,
   getTripsReport,
   getTheftLocationsReport,
+  getMasterReport,
 } from "@/lib/api";
 import {
   exportReportToExcel,
   exportReducer,
   ReportType as ExportReportType,
-  ExportState,
+  ReportExportData,
 } from "@/lib/export";
+import { exportReportToPdf } from "@/lib/pdf";
 import dynamic from "next/dynamic";
 import { Heatmap, ComparisonCard } from "@/components/reports";
-import { ReportKpiCards, ReportCharts, ReportRanking } from "./components";
+import {
+  MasterVehicleReport,
+  ReportKpiCards,
+  ReportCharts,
+  ReportRanking,
+  type MasterFailure,
+} from "./components";
 
 const SpecialReportViews = dynamic(
   () => import("./components/SpecialReportViews").then((m) => ({ default: m.SpecialReportViews })),
@@ -69,6 +81,7 @@ const SpecialReportViews = dynamic(
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ReportType =
+  | "master"
   | "consumption"
   | "refuels"
   | "idle-waste"
@@ -88,12 +101,15 @@ interface ReportConfig {
   icon: React.ElementType;
   color: string;
   requiresDateRange: boolean;
+  /** Scoped to one vehicle rather than the whole fleet — shows the picker. */
+  requiresVehicle?: boolean;
   category: "fuel" | "performance" | "status";
 }
 
 // ─── Report Configuration ─────────────────────────────────────────────────────
 
 const REPORT_CONFIG: ReportConfig[] = [
+  { id: "master", title: "Master Report", description: "Everything about one vehicle: fuel, trips, assignments, deviations & proof", icon: ClipboardList, color: "#4f46e5", requiresDateRange: true, requiresVehicle: true, category: "status" },
   { id: "consumption", title: "Fuel Consumption", description: "Fleet fuel consumption analysis", icon: Fuel, color: "#E84040", requiresDateRange: true, category: "fuel" },
   { id: "refuels", title: "Refueling Log", description: "Track all refueling events", icon: TrendingUp, color: "#22c55e", requiresDateRange: true, category: "fuel" },
   { id: "trips", title: "Trips", description: "Vehicle trip routes on map", icon: MapPin, color: "#3b82f6", requiresDateRange: true, category: "fuel" },
@@ -151,13 +167,25 @@ function ReportsPage() {
   const router = useRouter();
 
   // ─── State ──────────────────────────────────────────────────────────────────
-  const [activeReport, setActiveReport] = useState<ReportType>("consumption");
+  const [activeReport, setActiveReport] = useState<ReportType>("master");
   const [range, setRange] = useState({
     from: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(),
     to: new Date().toISOString(),
   });
 
+  /** Fuel-sensor vehicles — what the fleet-wide fuel reports are computed over. */
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  /**
+   * The whole fleet, sensor or not. The master report covers distance, trips,
+   * engine hours, assignments and deviations, none of which need a fuel sensor,
+   * so its picker must not be limited to `vehicles`.
+   */
+  const [allVehicles, setAllVehicles] = useState<Vehicle[]>([]);
+  /** Only used by vehicle-scoped reports (currently the master report). */
+  const [selectedImeis, setSelectedImeis] = useState<string[]>([]);
+  const [masterReports, setMasterReports] = useState<MasterReportData[]>([]);
+  const [masterFailures, setMasterFailures] = useState<MasterFailure[]>([]);
+  const [masterProgress, setMasterProgress] = useState<{ done: number; total: number } | null>(null);
   const [consumptionData, setConsumptionData] = useState<ConsumptionReportData | null>(null);
   const [refuelData, setRefuelData] = useState<RefuelReportData | null>(null);
   const [idleWasteData, setIdleWasteData] = useState<IdleWasteReportData | null>(null);
@@ -183,59 +211,164 @@ function ReportsPage() {
 
   const currentConfig = useMemo(() => REPORT_CONFIG.find((c) => c.id === activeReport)!, [activeReport]);
 
-  // ─── Export Handler ─────────────────────────────────────────────────────────
-  const handleExport = useCallback(async () => {
-    if (exportState.isExporting) return;
-    dispatchExport({ type: "START_EXPORT" });
+  // ─── Export Handlers ────────────────────────────────────────────────────────
 
-    try {
-      let data: unknown = null;
-      switch (activeReport) {
-        case "consumption": data = consumptionData; break;
-        case "refuels": data = refuelData; break;
-        case "idle-waste": data = idleWasteData; break;
-        case "high-speed": data = highSpeedData; break;
-        case "daily-trend": data = dailyTrendData; break;
-        case "thrift": data = thriftData; break;
-        case "engine-hours": data = engineHoursData; break;
-        case "vehicle-status": data = vehicleStatusData; break;
-        case "fleet-ranking": data = fleetRankingData; break;
-        case "trips": data = tripsData; break;
-      }
-
-      if (!data) throw new Error("No data available to export");
-
-      await exportReportToExcel(
-        activeReport as ExportReportType,
-        data as Parameters<typeof exportReportToExcel>[1],
-        range.from,
-        range.to
-      );
-
-      dispatchExport({ type: "EXPORT_SUCCESS" });
-    } catch (err) {
-      dispatchExport({
-        type: "EXPORT_ERROR",
-        error: err instanceof Error ? err.message : "Export failed",
-      });
+  /** Whatever the active tab is currently displaying, in export shape. */
+  const activeExportData = useMemo((): ReportExportData => {
+    switch (activeReport) {
+      case "consumption": return consumptionData;
+      case "refuels": return refuelData;
+      case "idle-waste": return idleWasteData;
+      case "high-speed": return highSpeedData;
+      case "daily-trend": return dailyTrendData;
+      case "thrift": return thriftData;
+      case "engine-hours": return engineHoursData;
+      case "vehicle-status": return vehicleStatusData;
+      case "fleet-ranking": return fleetRankingData;
+      case "trips": return tripsData;
+      case "theft-location": return theftLocationData;
+      // The master export covers every selected vehicle, not just the one on screen.
+      case "master": return masterReports;
+      default: return null;
     }
   }, [activeReport, consumptionData, refuelData, idleWasteData, highSpeedData,
     dailyTrendData, thriftData, engineHoursData, vehicleStatusData, fleetRankingData,
-    tripsData, theftLocationData, range.from, range.to, exportState.isExporting]);
+    tripsData, theftLocationData, masterReports]);
+
+  const hasExportData =
+    Array.isArray(activeExportData) ? activeExportData.length > 0 : activeExportData !== null;
+
+  const handleExport = useCallback(
+    async (format: "pdf" | "xlsx") => {
+      if (exportState.isExporting) return;
+      dispatchExport({ type: "START_EXPORT" });
+      try {
+        if (!activeExportData || (Array.isArray(activeExportData) && !activeExportData.length)) {
+          throw new Error("No data available to export");
+        }
+        const type = activeReport as ExportReportType;
+        if (format === "pdf") {
+          await exportReportToPdf(type, activeExportData, range.from, range.to);
+        } else {
+          await exportReportToExcel(type, activeExportData, range.from, range.to);
+        }
+        dispatchExport({ type: "EXPORT_SUCCESS" });
+      } catch (err) {
+        dispatchExport({
+          type: "EXPORT_ERROR",
+          error: err instanceof Error ? err.message : "Export failed",
+        });
+      }
+    },
+    [activeReport, activeExportData, range.from, range.to, exportState.isExporting]
+  );
 
   // ─── Load Vehicles ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
     setVehiclesLoading(true);
-    getVehicles(token)
-      .then((d) => setVehicles(d.vehicles))
+    Promise.all([getVehicles(token), getVehicles(token, false)])
+      .then(([sensorFleet, fullFleet]) => {
+        setVehicles(sensorFleet.vehicles);
+        setAllVehicles(fullFleet.vehicles);
+        // Default the vehicle-scoped reports to the first vehicle so the tab
+        // shows real data instead of an empty picker prompt.
+        setSelectedImeis((current) =>
+          current.length ? current : fullFleet.vehicles.slice(0, 1).map((v) => v.imei)
+        );
+      })
       .catch((e) => { if (e instanceof ApiError && e.statusCode === 401) handle401(); })
       .finally(() => setVehiclesLoading(false));
   }, [token, handle401]);
 
+  // ─── Load the master report (one request per selected vehicle) ──────────────
+  //
+  // Deliberately one call per vehicle rather than one batched call: each is
+  // independently sized, a single vehicle failing cannot take the whole report
+  // with it, and results can be rendered as they land instead of after the
+  // slowest. They are issued together, so wall-clock is the slowest vehicle.
+  const selectionKey = useMemo(() => [...selectedImeis].sort().join(","), [selectedImeis]);
+
+  // The resets below must run synchronously: deferring them would leave the
+  // previous selection's vehicles on screen underneath the new selection's
+  // heading until the first response lands. This is the same shape as the two
+  // report-loading effects already in this file.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (!token || authLoading || activeReport !== "master") return;
+    const imeis = selectionKey ? selectionKey.split(",") : [];
+    if (!imeis.length) {
+      setMasterReports([]);
+      setMasterFailures([]);
+      setMasterProgress(null);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const nameOf = (imei: string) =>
+      allVehicles.find((v) => v.imei === imei)?.name ?? imei;
+
+    setLoading(true);
+    setError(null);
+    setMasterReports([]);
+    setMasterFailures([]);
+    setMasterProgress({ done: 0, total: imeis.length });
+
+    let settled = 0;
+    let unauthorised = false;
+
+    Promise.all(
+      imeis.map((imei) =>
+        getMasterReport(token, imei, range.from, range.to)
+          .then((data) => {
+            if (cancelled) return;
+            // Append as each arrives, keeping the picker's order stable.
+            setMasterReports((prev) =>
+              [...prev, data].sort(
+                (a, b) => imeis.indexOf(a.vehicle.imei) - imeis.indexOf(b.vehicle.imei)
+              )
+            );
+          })
+          .catch((e: unknown) => {
+            if (cancelled) return;
+            if (e instanceof ApiError && e.statusCode === 401) {
+              unauthorised = true;
+              return;
+            }
+            setMasterFailures((prev) => [
+              ...prev,
+              {
+                imei,
+                name: nameOf(imei),
+                message: e instanceof ApiError ? e.userMessage : "Failed to load",
+              },
+            ]);
+          })
+          .finally(() => {
+            if (cancelled) return;
+            settled += 1;
+            setMasterProgress({ done: settled, total: imeis.length });
+          })
+      )
+    ).finally(() => {
+      if (cancelled) return;
+      setLoading(false);
+      setMasterProgress(null);
+      if (unauthorised) handle401();
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, authLoading, activeReport, selectionKey, range.from, range.to, allVehicles, handle401]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   // ─── Load Report Data ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!token || authLoading) return;
+    // The master report has its own multi-vehicle loader above.
+    if (activeReport === "master") return;
     if (currentConfig.requiresDateRange && !range.from) return;
 
     setLoading(true);
@@ -330,7 +463,8 @@ function ReportsPage() {
     };
 
     fetchReport();
-  }, [activeReport, token, range.from, range.to, vehicles, authLoading, handle401, currentConfig.requiresDateRange]);
+  }, [activeReport, token, range.from, range.to, vehicles, authLoading, handle401,
+    currentConfig.requiresDateRange]);
 
   // ─── Memoized Comparison Card ────────────────────────────────────────────────
   const renderComparison = useMemo(() => {
@@ -404,6 +538,20 @@ function ReportsPage() {
       );
     }
 
+    // The master report is a self-contained per-vehicle dossier — it brings its
+    // own KPI row, sections and maps rather than the shared fleet layout.
+    if (activeReport === "master") {
+      return (
+        <MasterVehicleReport
+          reports={masterReports}
+          loading={loading}
+          progress={masterProgress}
+          failures={masterFailures}
+          noVehicleSelected={selectedImeis.length === 0}
+        />
+      );
+    }
+
     return (
       <div className="h-full flex flex-col gap-3">
         <ReportKpiCards
@@ -459,7 +607,7 @@ function ReportsPage() {
         )}
       </div>
     );
-  }, [error, activeReport, loading, consumptionData, idleWasteData, thriftData, fleetRankingData, highSpeedData, vehicles.length, isSpecialView, dailyTrendData, refuelData, engineHoursData, vehicleStatusData, tripsData, theftLocationData, renderComparison, renderHeatmap]);
+  }, [error, activeReport, loading, consumptionData, idleWasteData, thriftData, fleetRankingData, highSpeedData, vehicles, isSpecialView, dailyTrendData, refuelData, engineHoursData, vehicleStatusData, tripsData, masterReports, masterProgress, masterFailures, selectedImeis.length, renderComparison, renderHeatmap]);
 
   if (authLoading) {
     return (
@@ -500,6 +648,14 @@ function ReportsPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 relative z-50">
+            {currentConfig.requiresVehicle && (
+              <VehicleMultiSelect
+                vehicles={allVehicles}
+                selected={selectedImeis}
+                onChange={setSelectedImeis}
+                loading={vehiclesLoading}
+              />
+            )}
             <DateRangePicker
               className="relative z-50"
               from={range.from}
@@ -508,26 +664,36 @@ function ReportsPage() {
               onToChange={(v) => setRange((r) => ({ ...r, to: v }))}
             />
             <button
-              onClick={handleExport}
-              disabled={exportState.isExporting || loading}
+              onClick={() => handleExport("pdf")}
+              disabled={exportState.isExporting || loading || !hasExportData}
+              title="Download a formatted PDF report"
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
               style={{
-                background: exportState.isExporting ? "#FEF2F2" : "var(--color-primary)",
-                color: exportState.isExporting ? "var(--color-primary)" : "white",
-                boxShadow: exportState.isExporting ? "none" : "0 2px 8px rgba(226, 63, 63, 0.25)",
+                background: "var(--color-primary)",
+                color: "white",
+                boxShadow: "0 2px 8px rgba(226, 63, 63, 0.25)",
               }}
             >
               {exportState.isExporting ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  Exporting...
-                </>
+                <Loader2 size={14} className="animate-spin" />
               ) : (
-                <>
-                  <Download size={14} />
-                  Export
-                </>
+                <FileText size={14} />
               )}
+              PDF
+            </button>
+            <button
+              onClick={() => handleExport("xlsx")}
+              disabled={exportState.isExporting || loading || !hasExportData}
+              title="Download the raw data as an Excel workbook"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+              style={{
+                background: "white",
+                color: "var(--color-text-2)",
+                border: "1px solid rgba(229, 231, 235, 0.9)",
+              }}
+            >
+              <Download size={14} />
+              Excel
             </button>
           </div>
         </div>

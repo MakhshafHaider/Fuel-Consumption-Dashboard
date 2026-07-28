@@ -37,6 +37,13 @@ export interface AssignmentRecord {
   startedAt: Date | null;
   completedAt: Date | null;
   persistent: boolean;
+  /**
+   * Start of the CURRENT run, re-stamped on every reset. Monitoring anchors its
+   * analysis window here rather than on `createdAt`, so a persistent assignment
+   * on its tenth run still only analyses that run. Null on rows predating the
+   * column; callers fall back to `startedAt`/`createdAt`.
+   */
+  runStartedAt: Date | null;
 }
 
 export interface RouteEvent {
@@ -80,8 +87,8 @@ export class AssignmentRepository {
     await this.assertOwnership(userId, data.routeId, data.driverId, data.imei);
     const result = await this.ds.query(
       `INSERT INTO fd_assignments
-         (user_id, route_id, driver_id, imei, status, priority, scheduled_start, notes, persistent, assigned_at)
-       VALUES (?, ?, ?, ?, 'assigned', ?, ?, ?, ?, NOW())`,
+         (user_id, route_id, driver_id, imei, status, priority, scheduled_start, notes, persistent, assigned_at, run_started_at)
+       VALUES (?, ?, ?, ?, 'assigned', ?, ?, ?, ?, NOW(), NOW())`,
       [
         userId,
         data.routeId,
@@ -127,6 +134,12 @@ export class AssignmentRepository {
     if (!veh) throw new BadRequestException('Vehicle not found or not owned');
   }
 
+  /**
+   * A cancelled assignment is a withdrawn one: it must not surface anywhere in
+   * the product, so every listing filters it out. The only way to read them
+   * back is to ask for that status explicitly — nothing in the UI does, which
+   * leaves the escape hatch for support/debugging only.
+   */
   async list(
     userId: number,
     opts: { status?: string } = {},
@@ -136,6 +149,8 @@ export class AssignmentRepository {
     if (opts.status) {
       where += ` AND a.status = ?`;
       params.push(opts.status);
+    } else {
+      where += ` AND a.status <> 'cancelled'`;
     }
     const rows = await this.ds.query(
       `${SELECT_FULL} WHERE ${where} ORDER BY a.created_at DESC`,
@@ -163,13 +178,48 @@ export class AssignmentRepository {
     return rows.map((r: any) => this.map(r));
   }
 
+  /**
+   * A driver's own job. Cancelled jobs are excluded so a driver holding the job
+   * screen open when the manager cancels can no longer load it, upload proof or
+   * complete bins against it — every driver-side handler reads through here.
+   *
+   * `completed` is deliberately still readable: the completion flow re-reads the
+   * job immediately after closing it, and a driver can never transition a job to
+   * cancelled (see assertDriverTransition), so nothing legitimately ends here
+   * holding a cancelled one.
+   */
   async getForDriver(driverId: number, assignmentId: number): Promise<AssignmentRecord> {
     const rows = await this.ds.query(
-      `${SELECT_FULL} WHERE a.assignment_id = ? AND a.driver_id = ? LIMIT 1`,
+      `${SELECT_FULL} WHERE a.assignment_id = ? AND a.driver_id = ?
+         AND a.status <> 'cancelled' LIMIT 1`,
       [assignmentId, driverId],
     );
     if (!rows.length) throw new NotFoundException('Assignment not found');
     return this.map(rows[0]);
+  }
+
+  /**
+   * Every assignment of one vehicle that overlaps [from, to] — the master
+   * report's job history. An assignment counts as overlapping when its working
+   * window (first of started/assigned/created → completed, or "still open")
+   * intersects the range, so long-running and still-open jobs are included.
+   * Cancelled jobs are withdrawn work and are excluded, as everywhere else.
+   */
+  async listForVehicleInRange(
+    userId: number,
+    imei: string,
+    from: Date,
+    to: Date,
+  ): Promise<AssignmentRecord[]> {
+    const rows = await this.ds.query(
+      `${SELECT_FULL}
+       WHERE a.user_id = ? AND a.imei = ? AND a.status <> 'cancelled'
+         AND COALESCE(a.started_at, a.assigned_at, a.created_at) <= ?
+         AND COALESCE(a.completed_at, NOW()) >= ?
+       ORDER BY COALESCE(a.started_at, a.assigned_at, a.created_at) ASC`,
+      [userId, imei, to, from],
+    );
+    return rows.map((r: any) => this.map(r));
   }
 
   /** All assignments currently being executed — used by the monitoring cron. */
@@ -365,7 +415,8 @@ export class AssignmentRepository {
        LEFT JOIN gs_user_object_drivers d ON d.driver_id = a.driver_id
        LEFT JOIN fd_routes r ON r.route_id = a.route_id
        LEFT JOIN fd_route_stops s ON s.stop_id = e.stop_id
-       WHERE a.user_id = ? AND e.type IN ('deviation','stop_skipped') AND e.event_id > ?
+       WHERE a.user_id = ? AND a.status <> 'cancelled'
+         AND e.type IN ('deviation','stop_skipped') AND e.event_id > ?
        ORDER BY e.event_id ASC
        LIMIT ?`,
       [userId, sinceEventId, limit],
@@ -401,7 +452,14 @@ export class AssignmentRepository {
     );
   }
 
-  /** Reset a (persistent) assignment for a fresh run: clear completions, reopen. */
+  /**
+   * Reset a (persistent) assignment for a fresh run: clear completions, reopen.
+   *
+   * `run_started_at` is re-stamped here. It is what keeps a persistent
+   * assignment working indefinitely: `started_at` is cleared so the next run can
+   * record its own start, which used to leave monitoring with no anchor but
+   * `created_at` and made every run analyse the whole history since day one.
+   */
   async resetAssignment(assignmentId: number): Promise<void> {
     await this.ds.query(`DELETE FROM fd_stop_completions WHERE assignment_id = ?`, [assignmentId]);
     await this.ds.query(
@@ -409,7 +467,8 @@ export class AssignmentRepository {
       [assignmentId],
     );
     await this.ds.query(
-      `UPDATE fd_assignments SET status = 'assigned', started_at = NULL, completed_at = NULL, progress_pct = NULL, off_route = 0
+      `UPDATE fd_assignments SET status = 'assigned', started_at = NULL, completed_at = NULL,
+              progress_pct = NULL, off_route = 0, run_started_at = NOW()
        WHERE assignment_id = ?`,
       [assignmentId],
     );
@@ -439,6 +498,7 @@ export class AssignmentRepository {
       startedAt: r.started_at,
       completedAt: r.completed_at,
       persistent: r.persistent === 1,
+      runStartedAt: r.run_started_at ?? null,
     };
   }
 }

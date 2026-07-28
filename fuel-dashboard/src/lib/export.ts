@@ -11,6 +11,8 @@ import {
   VehicleStatusReportData,
   FleetRankingData,
   TripsReportData,
+  TheftLocationsReportData,
+  MasterReportData,
 } from "./types";
 
 export type ReportType =
@@ -23,7 +25,9 @@ export type ReportType =
   | "engine-hours"
   | "vehicle-status"
   | "fleet-ranking"
-  | "trips";
+  | "trips"
+  | "theft-location"
+  | "master";
 
 export interface ExportOptions {
   filename?: string;
@@ -45,6 +49,8 @@ function generateFilename(reportType: ReportType, from: string, to: string): str
     "vehicle-status": "vehicle-status-report",
     "fleet-ranking": "fleet-ranking-report",
     trips: "trips-report",
+    "theft-location": "theft-locations-report",
+    master: "master-vehicle-report",
   };
 
   const fromStr = formatDate(from).replace(/,/g, "").replace(/\s+/g, "-").toLowerCase();
@@ -549,22 +555,430 @@ function exportTripsReport(data: TripsReportData): XLSX.WorkSheet {
   return ws;
 }
 
+function exportTheftLocationsReport(data: TheftLocationsReportData): XLSX.WorkSheet {
+  const headers = [
+    "Date & Time",
+    "Vehicle Name",
+    "Plate Number",
+    "IMEI",
+    "Fuel Before (L)",
+    "Fuel After (L)",
+    "Fuel Lost (L)",
+    "Latitude",
+    "Longitude",
+    "Map Link",
+  ];
+
+  const rows = (data.events ?? []).map((e) => [
+    formatDateTime(e.at),
+    e.name,
+    e.plateNumber,
+    e.imei,
+    e.fuelBefore?.toFixed(2) ?? "",
+    e.fuelAfter?.toFixed(2) ?? "",
+    e.consumed?.toFixed(2) ?? "",
+    e.lat ?? "",
+    e.lng ?? "",
+    e.lat !== null && e.lng !== null
+      ? `https://www.google.com/maps?q=${e.lat},${e.lng}`
+      : "",
+  ]);
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  ws["!cols"] = [
+    { wch: 20 }, { wch: 20 }, { wch: 15 }, { wch: 17 }, { wch: 15 },
+    { wch: 15 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 40 },
+  ];
+  return ws;
+}
+
+// ─── Master vehicle report (multi-vehicle, multi-sheet) ───────────────────────
+
+/**
+ * A rectangular block of report data. Excel renders one per sheet and the PDF
+ * renders one per table, so both exports are guaranteed to show the same
+ * numbers — there is no second copy of the row-building logic to drift.
+ */
+export interface ReportTable {
+  /** Sheet name in Excel (Excel caps these at 31 chars) / section title in the PDF. */
+  name: string;
+  headers: string[];
+  rows: (string | number)[][];
+  /** Column widths in characters; the PDF converts them to relative widths. */
+  widths?: number[];
+}
+
+function tableToSheet(t: ReportTable): XLSX.WorkSheet {
+  const ws = XLSX.utils.aoa_to_sheet([t.headers, ...t.rows]);
+  if (t.widths) ws["!cols"] = t.widths.map((wch) => ({ wch }));
+  return ws;
+}
+
+/** Excel truncates sheet names at 31 chars and rejects several punctuation marks. */
+function safeSheetName(name: string, taken: Set<string>): string {
+  const base = name.replace(/[\\/?*[\]:]/g, "-").slice(0, 31) || "Sheet";
+  let candidate = base;
+  let n = 2;
+  while (taken.has(candidate)) {
+    const suffix = ` (${n++})`;
+    candidate = base.slice(0, 31 - suffix.length) + suffix;
+  }
+  taken.add(candidate);
+  return candidate;
+}
+
+const vehicleLabel = (d: MasterReportData) =>
+  d.vehicle.plateNumber ? `${d.vehicle.name} (${d.vehicle.plateNumber})` : d.vehicle.name;
+
+/**
+ * One row per vehicle. With a single vehicle selected this is still the right
+ * shape — it just has one row — so there is no separate single-vehicle layout.
+ */
+function masterFleetSummaryTable(reports: MasterReportData[]): ReportTable {
+  const headers = [
+    "Vehicle", "Plate", "IMEI", "Distance (km)", "Fuel Used", "Refuelled",
+    "Refuel Events", "km/L", "Max Speed", "Engine Hours", "Idle Hours",
+    "Stationary %", "Trips", "Trip Distance (km)", "Assignments",
+    "Completed", "Bins Total", "Bins Done", "Bins Skipped", "Bins Missed",
+    "Completion %", "Photo Proofs", "Deviations", "Worst Deviation (m)",
+    "Off-Route (km)", "Theft Risk", "Theft Drops",
+  ];
+  const rows = reports.map((d) => [
+    d.vehicle.name,
+    d.vehicle.plateNumber ?? "",
+    d.vehicle.imei,
+    d.distance.totalDistanceKm,
+    d.fuel.consumed,
+    d.fuel.refueled,
+    d.fuel.refuelEventCount,
+    d.distance.kmPerLiter ?? "",
+    d.distance.maxSpeedKmh,
+    d.engine.engineOnHours,
+    d.engine.idleHours,
+    d.engine.idleSharePct,
+    d.trips.totalTrips,
+    d.trips.totalDistanceKm,
+    d.assignments.total,
+    d.assignments.completed,
+    d.assignments.stopsTotal,
+    d.assignments.stopsCompleted,
+    d.assignments.stopsSkipped,
+    d.assignments.stopsMissed,
+    d.assignments.completionRatePct,
+    d.assignments.photoProofCount,
+    d.deviations.total,
+    d.deviations.maxDistanceM,
+    d.deviations.totalOffRouteKm,
+    d.theft?.riskLevel ?? "n/a",
+    d.theft?.summary.theftDrops ?? "",
+  ]);
+  return {
+    name: "Fleet Summary",
+    headers,
+    rows,
+    widths: [22, 14, 17, ...Array<number>(headers.length - 3).fill(14)],
+  };
+}
+
+function masterTripsTable(reports: MasterReportData[]): ReportTable {
+  const headers = [
+    "Vehicle", "#", "Start", "End", "Duration (min)", "Distance (km)",
+    "Fuel Used", "km/L", "Max Speed", "Avg Speed", "Idle (min)",
+    "Start Location", "End Location",
+  ];
+  const rows = reports.flatMap((d) =>
+    d.trips.items.map((t, i) => [
+      vehicleLabel(d),
+      i + 1,
+      formatDateTime(t.startTime),
+      formatDateTime(t.endTime),
+      t.durationMinutes,
+      t.distanceKm,
+      t.fuelConsumed,
+      t.kmPerLiter ?? "",
+      t.maxSpeed,
+      t.avgSpeed,
+      t.idleDurationMinutes,
+      `${t.startLocation.lat}, ${t.startLocation.lng}`,
+      `${t.endLocation.lat}, ${t.endLocation.lng}`,
+    ])
+  );
+  return {
+    name: "Trips",
+    headers,
+    rows,
+    widths: [22, 5, 20, 20, 14, 14, 12, 10, 12, 12, 12, 24, 24],
+  };
+}
+
+function masterAssignmentsTable(reports: MasterReportData[]): ReportTable {
+  const headers = [
+    "Vehicle", "Assignment ID", "Route", "Driver", "Status", "Scheduled",
+    "Started", "Completed", "Duration (min)", "Distance (km)", "Planned (km)",
+    "Bins Total", "Completed", "Skipped", "Not Reached", "Completion (%)",
+    "Photo Proofs", "Deviations", "Worst Deviation (m)", "Notes",
+  ];
+  const rows = reports.flatMap((d) =>
+    d.assignments.items.map((a) => [
+      vehicleLabel(d),
+      a.assignmentId,
+      a.routeName ?? `Route ${a.routeId}`,
+      a.driverName ?? `Driver ${a.driverId}`,
+      a.status,
+      a.scheduledStart ? formatDateTime(a.scheduledStart) : "",
+      a.startedAt ? formatDateTime(a.startedAt) : "",
+      a.completedAt ? formatDateTime(a.completedAt) : "",
+      a.stats.durationMinutes ?? "",
+      a.stats.distanceKm,
+      a.plannedDistanceKm ?? "",
+      a.stats.stopsTotal,
+      a.stats.stopsCompleted,
+      a.stats.stopsSkipped,
+      a.stats.stopsMissed,
+      a.stats.completionRatePct,
+      a.stats.photoProofCount,
+      a.stats.excursionCount,
+      a.stats.maxDeviationM,
+      a.notes ?? "",
+    ])
+  );
+  return {
+    name: "Assignments",
+    headers,
+    rows,
+    widths: [22, 14, 26, 20, 12, 20, 20, 20, 14, 13, 13, 11, 11, 10, 13, 14, 13, 12, 19, 30],
+  };
+}
+
+function masterBinsTable(reports: MasterReportData[]): ReportTable {
+  const headers = [
+    "Vehicle", "Assignment ID", "Route", "Driver", "Seq", "Bin", "Status",
+    "Completed At", "Driver Distance (m)", "In Range", "Photo Proof",
+    "Latitude", "Longitude", "Remark / Note",
+  ];
+  const rows = reports.flatMap((d) =>
+    d.assignments.items.flatMap((a) =>
+      a.stops.map((s) => [
+        vehicleLabel(d),
+        a.assignmentId,
+        a.routeName ?? `Route ${a.routeId}`,
+        a.driverName ?? `Driver ${a.driverId}`,
+        s.seq,
+        s.name ?? `Stop ${s.seq}`,
+        s.status,
+        s.completedAt ? formatDateTime(s.completedAt) : "",
+        s.completionDistanceM ?? "",
+        s.inRange === null ? "" : s.inRange ? "yes" : "no",
+        s.photoPath ?? "",
+        // 5 dp is ~1 m — full float precision just wraps the column.
+        Number(s.lat.toFixed(5)),
+        Number(s.lng.toFixed(5)),
+        s.skipRemark ?? s.note ?? "",
+      ])
+    )
+  );
+  return {
+    name: "Bins & Proof",
+    headers,
+    rows,
+    widths: [22, 14, 24, 20, 6, 24, 18, 20, 19, 10, 34, 12, 12, 40],
+  };
+}
+
+function masterDeviationsTable(reports: MasterReportData[]): ReportTable {
+  const headers = [
+    "Vehicle", "Deviation ID", "Assignment ID", "Route", "Driver", "Started",
+    "Ended", "Duration (min)", "Max Off Route (m)", "Avg Off Route (m)",
+    "Tolerance (m)", "Off-Route Distance (km)", "Returned To Route",
+    "Furthest Point", "Map Link", "System Note", "Operator Remark",
+  ];
+  const rows = reports.flatMap((d) =>
+    d.deviations.items.map((e) => [
+      vehicleLabel(d),
+      e.excursionId,
+      e.assignmentId,
+      e.routeName ?? "",
+      e.driverName ?? "",
+      formatDateTime(e.startedAt),
+      formatDateTime(e.endedAt),
+      e.durationMinutes,
+      e.maxDistanceM,
+      e.avgDistanceM,
+      e.corridorBufferM,
+      e.offRouteDistanceKm,
+      e.returnedToRoute ? "yes" : "no",
+      `${e.peak.lat.toFixed(6)}, ${e.peak.lng.toFixed(6)}`,
+      `https://www.google.com/maps?q=${e.peak.lat},${e.peak.lng}`,
+      e.events.map((ev) => ev.note).filter(Boolean).join(" | "),
+      e.remarks.join(" | "),
+    ])
+  );
+  return {
+    name: "Deviations",
+    headers,
+    rows,
+    widths: [22, 14, 14, 24, 20, 20, 20, 14, 18, 18, 13, 22, 17, 26, 44, 44, 44],
+  };
+}
+
+function masterRefuelsTable(reports: MasterReportData[]): ReportTable {
+  const headers = ["Vehicle", "Date & Time", "Fuel Before", "Fuel After", "Added", "Unit"];
+  const rows = reports.flatMap((d) =>
+    d.fuel.refuels.map((r) => [
+      vehicleLabel(d),
+      formatDateTime(r.at),
+      r.fuelBefore,
+      r.fuelAfter,
+      r.added,
+      r.unit,
+    ])
+  );
+  return { name: "Refuels", headers, rows, widths: [22, 20, 14, 14, 12, 8] };
+}
+
+/**
+ * Every table in a master export, in report order. Empty detail tables are
+ * dropped so a quiet period doesn't produce a workbook of blank sheets — the
+ * fleet summary always survives, since it is the report's spine.
+ */
+export function buildMasterTables(reports: MasterReportData[]): ReportTable[] {
+  const all = [
+    masterFleetSummaryTable(reports),
+    masterTripsTable(reports),
+    masterAssignmentsTable(reports),
+    masterBinsTable(reports),
+    masterDeviationsTable(reports),
+    masterRefuelsTable(reports),
+  ];
+  return all.filter((t, i) => i === 0 || t.rows.length > 0);
+}
+
+// ─── Shared plumbing ──────────────────────────────────────────────────────────
+
+/** Data a report export can receive. `master` carries one entry per vehicle. */
+export type ReportExportData =
+  | ConsumptionReportData
+  | RefuelReportData
+  | IdleWasteReportData
+  | HighSpeedWasteReportData
+  | DailyTrendReportData
+  | ThriftReportData
+  | EngineHoursReportData
+  | VehicleStatusReportData
+  | FleetRankingData
+  | TripsReportData
+  | TheftLocationsReportData
+  | MasterReportData[]
+  | null;
+
+export const REPORT_SHEET_NAMES: Record<ReportType, string> = {
+  consumption: "Consumption",
+  refuels: "Refueling Log",
+  "idle-waste": "Idle Waste",
+  "high-speed": "High Speed Waste",
+  "daily-trend": "Daily Trend",
+  thrift: "Thrift Scores",
+  "engine-hours": "Engine Hours",
+  "vehicle-status": "Vehicle Status",
+  "fleet-ranking": "Fleet Ranking",
+  trips: "Trips",
+  "theft-location": "Theft Locations",
+  master: "Fleet Summary",
+};
+
+/** Human title for a report, used on screen and as the PDF cover heading. */
+export const REPORT_TITLES: Record<ReportType, string> = {
+  consumption: "Fuel Consumption Report",
+  refuels: "Refuelling Log",
+  "idle-waste": "Idle Waste Report",
+  "high-speed": "High Speed Waste Report",
+  "daily-trend": "Daily Consumption Trend",
+  thrift: "Thrift Score Report",
+  "engine-hours": "Engine Hours Report",
+  "vehicle-status": "Fleet Status Snapshot",
+  "fleet-ranking": "Fleet Ranking",
+  trips: "Trips Report",
+  "theft-location": "Fuel Theft Locations",
+  master: "Master Vehicle Report",
+};
+
+/**
+ * The single worksheet for a fleet-wide report. Exported so the PDF renderer
+ * can read the same grid back out (via `sheet_to_json`) instead of keeping a
+ * second, drift-prone copy of every table definition.
+ */
+export function buildReportSheet(
+  reportType: Exclude<ReportType, "master">,
+  data: Exclude<ReportExportData, MasterReportData[] | null>
+): XLSX.WorkSheet {
+  switch (reportType) {
+    case "consumption":
+      return exportConsumptionReport(data as ConsumptionReportData);
+    case "refuels":
+      return exportRefuelReport(data as RefuelReportData);
+    case "idle-waste":
+      return exportIdleWasteReport(data as IdleWasteReportData);
+    case "high-speed":
+      return exportHighSpeedWasteReport(data as HighSpeedWasteReportData);
+    case "daily-trend":
+      return exportDailyTrendReport(data as DailyTrendReportData);
+    case "thrift":
+      return exportThriftReport(data as ThriftReportData);
+    case "engine-hours":
+      return exportEngineHoursReport(data as EngineHoursReportData);
+    case "vehicle-status":
+      return exportVehicleStatusReport(data as VehicleStatusReportData);
+    case "fleet-ranking":
+      return exportFleetRankingReport(data as FleetRankingData);
+    case "trips":
+      return exportTripsReport(data as TripsReportData);
+    case "theft-location":
+      return exportTheftLocationsReport(data as TheftLocationsReportData);
+    default:
+      throw new Error(`Unknown report type: ${String(reportType)}`);
+  }
+}
+
+/** A worksheet read back as [headers, ...rows] — the PDF's table source. */
+export function sheetToTable(ws: XLSX.WorkSheet, name: string): ReportTable {
+  const aoa = XLSX.utils.sheet_to_json<(string | number)[]>(ws, {
+    header: 1,
+    defval: "",
+    blankrows: false,
+  });
+  const [headers = [], ...rows] = aoa;
+  const cols = (ws["!cols"] as Array<{ wch?: number }> | undefined) ?? [];
+  return {
+    name,
+    headers: headers.map((h) => String(h)),
+    rows,
+    widths: cols.length ? cols.map((c) => c.wch ?? 14) : undefined,
+  };
+}
+
+/** Every table a report contributes, whichever format is rendering it. */
+export function buildReportTables(
+  reportType: ReportType,
+  data: ReportExportData
+): ReportTable[] {
+  if (!data) throw new Error("No data available to export");
+  if (reportType === "master") {
+    const reports = data as MasterReportData[];
+    if (!reports.length) throw new Error("No data available to export");
+    return buildMasterTables(reports);
+  }
+  const ws = buildReportSheet(
+    reportType,
+    data as Exclude<ReportExportData, MasterReportData[] | null>
+  );
+  return [sheetToTable(ws, REPORT_SHEET_NAMES[reportType])];
+}
+
 // ─── Main Export Function ─────────────────────────────────────────────────────
 
 export async function exportReportToExcel(
   reportType: ReportType,
-  data:
-    | ConsumptionReportData
-    | RefuelReportData
-    | IdleWasteReportData
-    | HighSpeedWasteReportData
-    | DailyTrendReportData
-    | ThriftReportData
-    | EngineHoursReportData
-    | VehicleStatusReportData
-    | FleetRankingData
-    | TripsReportData
-    | null,
+  data: ReportExportData,
   from: string,
   to: string,
   options: ExportOptions = {}
@@ -573,65 +987,35 @@ export async function exportReportToExcel(
     throw new Error("No data available to export");
   }
 
-  const sheetNames: Record<ReportType, string> = {
-    consumption: "Consumption",
-    refuels: "Refueling Log",
-    "idle-waste": "Idle Waste",
-    "high-speed": "High Speed Waste",
-    "daily-trend": "Daily Trend",
-    thrift: "Thrift Scores",
-    "engine-hours": "Engine Hours",
-    "vehicle-status": "Vehicle Status",
-    "fleet-ranking": "Fleet Ranking",
-    trips: "Trips",
-  };
-
-  // Generate worksheet based on report type
-  let ws: XLSX.WorkSheet;
-
-  switch (reportType) {
-    case "consumption":
-      ws = exportConsumptionReport(data as ConsumptionReportData);
-      break;
-    case "refuels":
-      ws = exportRefuelReport(data as RefuelReportData);
-      break;
-    case "idle-waste":
-      ws = exportIdleWasteReport(data as IdleWasteReportData);
-      break;
-    case "high-speed":
-      ws = exportHighSpeedWasteReport(data as HighSpeedWasteReportData);
-      break;
-    case "daily-trend":
-      ws = exportDailyTrendReport(data as DailyTrendReportData);
-      break;
-    case "thrift":
-      ws = exportThriftReport(data as ThriftReportData);
-      break;
-    case "engine-hours":
-      ws = exportEngineHoursReport(data as EngineHoursReportData);
-      break;
-    case "vehicle-status":
-      ws = exportVehicleStatusReport(data as VehicleStatusReportData);
-      break;
-    case "fleet-ranking":
-      ws = exportFleetRankingReport(data as FleetRankingData);
-      break;
-    case "trips":
-      ws = exportTripsReport(data as TripsReportData);
-      break;
-    default:
-      throw new Error(`Unknown report type: ${reportType}`);
-  }
-
-  // Create workbook
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, options.sheetName ?? sheetNames[reportType]);
-
-  // Generate filename
   const filename = options.filename ?? generateFilename(reportType, from, to);
 
-  // Export to file
+  // The master report spans several sheets; every other report is one sheet.
+  if (reportType === "master") {
+    const wb = XLSX.utils.book_new();
+    const taken = new Set<string>();
+    for (const table of buildMasterTables(data as MasterReportData[])) {
+      XLSX.utils.book_append_sheet(
+        wb,
+        tableToSheet(table),
+        safeSheetName(table.name, taken)
+      );
+    }
+    XLSX.writeFile(wb, filename);
+    return;
+  }
+
+  const ws = buildReportSheet(
+    reportType,
+    data as Exclude<ReportExportData, MasterReportData[] | null>
+  );
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    wb,
+    ws,
+    options.sheetName ?? REPORT_SHEET_NAMES[reportType]
+  );
+
   XLSX.writeFile(wb, filename);
 }
 

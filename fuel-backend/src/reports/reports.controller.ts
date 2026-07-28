@@ -9,14 +9,19 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ReportsService } from './reports.service';
+import { MasterReportService } from './services/master-report.service';
 import { ReportRangeDto } from './dto/report-range.dto';
+import { MasterReportDto } from './dto/master-report.dto';
 
 @Controller('reports')
 @UseGuards(AuthGuard('jwt'))
 export class ReportsController {
   private readonly logger = new Logger(ReportsController.name);
 
-  constructor(private readonly reportsService: ReportsService) {}
+  constructor(
+    private readonly reportsService: ReportsService,
+    private readonly masterReportService: MasterReportService,
+  ) {}
 
   private requireRange(query: ReportRangeDto) {
     if (!query.from || !query.to) {
@@ -269,7 +274,9 @@ export class ReportsController {
       `GET /reports/theft-locations user=${req.user.id} from=${query.from} to=${query.to}`,
     );
     const data = await this.reportsService.getTheftLocationsReport(
-      req.user.id, query.from, query.to,
+      req.user.id,
+      query.from,
+      query.to,
     );
     return {
       success: true,
@@ -302,6 +309,34 @@ export class ReportsController {
       success: true,
       message: 'Trips report generated',
       report: 'trips',
+      data,
+    };
+  }
+
+  /**
+   * GET /reports/master?imei=&from=&to=
+   * Everything the platform knows about ONE vehicle over a date range: fuel,
+   * distance, trips, engine time, theft signals, dispatch assignments with
+   * per-bin proof, and route deviations with map evidence + operator remarks.
+   */
+  @Get('master')
+  async getMasterReport(
+    @Request() req: { user: { id: number } },
+    @Query() query: MasterReportDto,
+  ) {
+    this.logger.log(
+      `GET /reports/master user=${req.user.id} imei=${query.imei} from=${query.from} to=${query.to}`,
+    );
+    const data = await this.masterReportService.getMasterReport(
+      req.user.id,
+      query.imei,
+      query.from,
+      query.to,
+    );
+    return {
+      success: true,
+      message: 'Master vehicle report generated',
+      report: 'master',
       data,
     };
   }

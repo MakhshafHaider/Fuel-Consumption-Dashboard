@@ -52,6 +52,12 @@ import { ManagerSettingsRepository } from './services/manager-settings.repositor
     StopCompletionService,
     ManagerSettingsRepository,
   ],
-  exports: [AssignmentRepository, RouteRepository, OsrmClientService],
+  exports: [
+    AssignmentRepository,
+    RouteRepository,
+    OsrmClientService,
+    StopCompletionRepository,
+    DeviationService,
+  ],
 })
 export class DispatchModule {}
