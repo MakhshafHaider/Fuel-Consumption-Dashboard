@@ -5,7 +5,11 @@ import {
   DynamicTableQueryService,
   DataRow,
 } from './dynamic-table-query.service';
-import { DropEvent, RefuelEvent } from './fuel-consumption.service';
+import {
+  DropEvent,
+  RefuelEvent,
+  periodConsumed,
+} from './fuel-consumption.service';
 import {
   FuelReading,
   applyMedianFilter,
@@ -117,7 +121,7 @@ export class FuelStatsService {
     const rows = allRows.filter((r) => new Date(r.dt_tracker) >= from);
     const transformedRows = allTransformedRows.filter((r) => r.ts >= from);
 
-    const consumed =
+    const dropSumConsumed =
       Math.round(
         drops
           .filter((d) => !d.isSensorJump)
@@ -125,6 +129,24 @@ export class FuelStatsService {
       ) / 100;
     const refueled =
       Math.round(refuels.reduce((s, r) => s + r.added, 0) * 100) / 100;
+
+    // Mass-balance the same way fuel-consumption.service.ts does: prefer
+    // (firstFuel - lastFuel) + refueled over the raw drop sum, which zeroes
+    // out when sensor-jump filtering or the median filter smooths away every
+    // drop event even though fuel was actually consumed.
+    const firstFuel = readings.length > 0 ? readings[0].fuel : null;
+    const lastFuel =
+      readings.length > 0 ? readings[readings.length - 1].fuel : null;
+    const netDrop =
+      firstFuel !== null && lastFuel !== null
+        ? Math.round((firstFuel - lastFuel) * 100) / 100
+        : null;
+    const consumed = periodConsumed({
+      netDrop,
+      refueled,
+      consumed: dropSumConsumed,
+    });
+
     const estimatedCost =
       pricePerLiter !== null
         ? Math.round(consumed * pricePerLiter * 100) / 100
@@ -368,7 +390,7 @@ export class FuelStatsService {
           const postFallback =
             !fakeRise &&
             !recoveryRise &&
-            isPostRefuelFallback(baselineTs, peakFuel, validRows);
+            isPostRefuelFallback(baselineTs, baselineFuel, peakFuel, validRows);
 
           if (!fakeRise && !recoveryRise && !postFallback) {
             refuels.push({

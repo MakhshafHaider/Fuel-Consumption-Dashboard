@@ -305,19 +305,29 @@ export class FuelConsumptionService {
         ? Math.round((firstFuel - lastFuel) * 100) / 100
         : null;
 
+    const roundedConsumed = Math.round(consumed * 100) / 100;
+    const roundedRefueled = Math.round(refueled * 100) / 100;
+
+    // Cost must track the same figure callers get from periodConsumed(result)
+    // (mass balance, falling back to the drop sum) — not a separately-derived
+    // number, or the dashboard can show a cost that doesn't match its own
+    // "fuel used" total once a refuel changes which branch periodConsumed picks.
+    const effectiveConsumed = periodConsumed({
+      netDrop,
+      refueled: roundedRefueled,
+      consumed: roundedConsumed,
+    });
     const estimatedCost =
-      pricePerLiter !== null && netDrop !== null && netDrop > 0
-        ? Math.round(netDrop * pricePerLiter * 100) / 100
-        : pricePerLiter !== null
-          ? Math.round(consumed * pricePerLiter * 100) / 100
-          : null;
+      pricePerLiter !== null
+        ? Math.round(effectiveConsumed * pricePerLiter * 100) / 100
+        : null;
 
     return {
       imei,
       from: from.toISOString(),
       to: to.toISOString(),
-      consumed: Math.round(consumed * 100) / 100,
-      refueled: Math.round(refueled * 100) / 100,
+      consumed: roundedConsumed,
+      refueled: roundedRefueled,
       estimatedCost,
       unit: sensor.units || 'L',
       refuelEvents: refuels.length,
@@ -555,7 +565,12 @@ export class FuelConsumptionService {
           const postFallback =
             !fakeRise &&
             !recoveryRise &&
-            isPostRefuelFallback(consolidationEndTs, peakFuel, transformed);
+            isPostRefuelFallback(
+              consolidationEndTs,
+              baselineFuel,
+              peakFuel,
+              transformed,
+            );
           // ── Layer D: movement veto (shared with dashboard/reports paths) ──────
           // A station refuel happens while the vehicle is standing still, so a
           // rise the vehicle never stopped for is a sloshing artefact.

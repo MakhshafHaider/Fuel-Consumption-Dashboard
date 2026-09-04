@@ -144,6 +144,12 @@ export class FuelController {
       message: 'Current fuel level fetched',
       data: {
         imei,
+        // Mirrors the single-sensor (?sensorId=) response shape — every
+        // frontend consumer of this endpoint reads `fuel`/`method` and never
+        // requests a sensorId, so without these two fields "current fuel"
+        // always renders as 0 regardless of the vehicle's actual level.
+        fuel: totalFuel,
+        method: tanks[0]?.method ?? null,
         totalFuel,
         unit: tanks[0]?.unit || 'L',
         tanks,

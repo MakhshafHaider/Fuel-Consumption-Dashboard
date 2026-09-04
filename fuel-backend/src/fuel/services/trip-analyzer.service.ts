@@ -5,6 +5,7 @@ import {
   DynamicTableQueryService,
   DataRow,
 } from './dynamic-table-query.service';
+import { ConsumptionResult, periodConsumed } from './fuel-consumption.service';
 
 const NOISE_THRESHOLD = 0.5;
 const MIN_TRIP_DURATION_MINUTES = 5;
@@ -56,6 +57,71 @@ export interface TripAnalysisResult {
   totalFuelConsumed: number;
   totalDurationMinutes: number;
   avgKmPerLiter: number | null;
+}
+
+export interface NormalizedTripFuel {
+  trips: Trip[];
+  totalFuelConsumed: number;
+  tripFuelConsumed: number;
+  unassignedFuelConsumed: number;
+  avgKmPerLiter: number | null;
+}
+
+/**
+ * Per-trip fuel comes from a drop-sum within each trip's time window, which —
+ * like the whole-period drop sum — inflates under sensor oscillation. The
+ * period-level mass balance (periodConsumed) is the reliable number, so when
+ * the trips' raw total exceeds it, every trip is scaled down proportionally
+ * to match. Never scales up: trips legitimately summing to less than the
+ * period total (idle/unassigned consumption outside any trip) are left as-is.
+ *
+ * Used by both /reports/trips and the master report so a trip's fuel figure
+ * never disagrees between the two.
+ */
+export function normalizeTripFuelToPeriod(
+  analysis: Pick<TripAnalysisResult, 'trips' | 'totalFuelConsumed' | 'totalDistanceKm'>,
+  consumption: Pick<ConsumptionResult, 'netDrop' | 'refueled' | 'consumed'>,
+): NormalizedTripFuel {
+  const periodFuelConsumed = periodConsumed(consumption);
+  const rawTripFuelConsumed = analysis.totalFuelConsumed;
+  const tripFuelScale =
+    rawTripFuelConsumed > 0 && rawTripFuelConsumed > periodFuelConsumed
+      ? periodFuelConsumed / rawTripFuelConsumed
+      : 1;
+
+  const trips =
+    tripFuelScale < 1
+      ? analysis.trips.map((t) => {
+          const normalizedFuel =
+            Math.round(t.fuelConsumed * tripFuelScale * 100) / 100;
+          return {
+            ...t,
+            fuelConsumed: normalizedFuel,
+            kmPerLiter:
+              normalizedFuel > 0 && t.distanceKm > 0
+                ? Math.round((t.distanceKm / normalizedFuel) * 100) / 100
+                : null,
+          };
+        })
+      : analysis.trips;
+
+  const tripFuelConsumed = Math.min(rawTripFuelConsumed, periodFuelConsumed);
+  const unassignedFuelConsumed = Math.max(
+    0,
+    periodFuelConsumed - tripFuelConsumed,
+  );
+
+  return {
+    trips,
+    totalFuelConsumed: Math.round(periodFuelConsumed * 100) / 100,
+    tripFuelConsumed: Math.round(tripFuelConsumed * 100) / 100,
+    unassignedFuelConsumed: Math.round(unassignedFuelConsumed * 100) / 100,
+    avgKmPerLiter:
+      tripFuelConsumed > 0 && analysis.totalDistanceKm > 0
+        ? Math.round((analysis.totalDistanceKm / tripFuelConsumed) * 100) /
+          100
+        : null,
+  };
 }
 
 interface EnrichedRow {

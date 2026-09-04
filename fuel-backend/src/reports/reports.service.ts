@@ -11,7 +11,10 @@ import { FuelTransformService } from '../fuel/services/fuel-transform.service';
 import { DynamicTableQueryService } from '../fuel/services/dynamic-table-query.service';
 import { ThriftService } from '../fuel/services/thrift.service';
 import { TheftDetectionService } from '../fuel/services/theft-detection.service';
-import { TripAnalyzerService } from '../fuel/services/trip-analyzer.service';
+import {
+  TripAnalyzerService,
+  normalizeTripFuelToPeriod,
+} from '../fuel/services/trip-analyzer.service';
 
 const NOISE_THRESHOLD = 0.5;
 
@@ -995,41 +998,12 @@ export class ReportsService {
             ),
           ]);
 
-          const periodFuelConsumed = periodConsumed(consumption);
-          const rawTripFuelConsumed = analysis.totalFuelConsumed;
-          const tripFuelScale =
-            rawTripFuelConsumed > 0 && rawTripFuelConsumed > periodFuelConsumed
-              ? periodFuelConsumed / rawTripFuelConsumed
-              : 1;
-          const normalizedTrips =
-            tripFuelScale < 1
-              ? analysis.trips.map((t) => {
-                  const normalizedFuel =
-                    Math.round(t.fuelConsumed * tripFuelScale * 100) / 100;
-                  return {
-                    ...t,
-                    fuelConsumed: normalizedFuel,
-                    kmPerLiter:
-                      normalizedFuel > 0 && t.distanceKm > 0
-                        ? Math.round((t.distanceKm / normalizedFuel) * 100) /
-                          100
-                        : null,
-                  };
-                })
-              : analysis.trips;
-          const tripFuelConsumed = Math.min(
-            rawTripFuelConsumed,
-            periodFuelConsumed,
-          );
-          const unassignedFuelConsumed = Math.max(
-            0,
-            periodFuelConsumed - tripFuelConsumed,
-          );
+          const normalized = normalizeTripFuelToPeriod(analysis, consumption);
 
           fleetTotalTrips += analysis.totalTrips;
           fleetTotalDistance += analysis.totalDistanceKm;
-          fleetTripFuel += tripFuelConsumed;
-          fleetPeriodFuel += periodFuelConsumed;
+          fleetTripFuel += normalized.tripFuelConsumed;
+          fleetPeriodFuel += normalized.totalFuelConsumed;
           fleetTotalDuration += analysis.totalDurationMinutes;
 
           return {
@@ -1039,18 +1013,12 @@ export class ReportsService {
             unit: analysis.unit,
             totalTrips: analysis.totalTrips,
             totalDistanceKm: analysis.totalDistanceKm,
-            totalFuelConsumed: Math.round(periodFuelConsumed * 100) / 100,
-            tripFuelConsumed: Math.round(tripFuelConsumed * 100) / 100,
-            unassignedFuelConsumed:
-              Math.round(unassignedFuelConsumed * 100) / 100,
+            totalFuelConsumed: normalized.totalFuelConsumed,
+            tripFuelConsumed: normalized.tripFuelConsumed,
+            unassignedFuelConsumed: normalized.unassignedFuelConsumed,
             totalDurationMinutes: analysis.totalDurationMinutes,
-            avgKmPerLiter:
-              tripFuelConsumed > 0 && analysis.totalDistanceKm > 0
-                ? Math.round(
-                    (analysis.totalDistanceKm / tripFuelConsumed) * 100,
-                  ) / 100
-                : null,
-            trips: normalizedTrips,
+            avgKmPerLiter: normalized.avgKmPerLiter,
+            trips: normalized.trips,
             status: 'ok' as const,
           };
         } catch (err) {

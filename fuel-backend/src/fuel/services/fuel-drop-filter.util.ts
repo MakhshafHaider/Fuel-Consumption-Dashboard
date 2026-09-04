@@ -83,6 +83,18 @@ export const REFUEL_CONSOLIDATION_MINUTES = 15;
  */
 export const POST_REFUEL_VERIFY_EPS_LITERS = 8.0;
 
+/**
+ * Minimum fraction of the total rise (peakFuel − baselineFuel) that must
+ * still be present after the post-verify window for a rise to count as a
+ * genuine refuel. Guards against the case where `peakFuel` itself is a
+ * noisy overshoot recorded while the vehicle was still moving (fuel slosh
+ * can spike a reading 10-15 L above where the tank actually settles) — an
+ * eps-from-peak check alone then falsely rejects a real refuel just because
+ * it settled below that inflated peak, even though most of the added fuel
+ * was retained.
+ */
+export const RISE_RETENTION_FRACTION = 0.5;
+
 // ─── Typed row ────────────────────────────────────────────────────────────────
 
 export interface FuelReading {
@@ -532,14 +544,27 @@ export function isStationaryDropRecovery(
  */
 export function isPostRefuelFallback(
   riseAt: Date,
+  baselineFuel: number,
   peakFuel: number,
   allRows: FuelReading[],
   spikeWindowMinutes: number = SPIKE_WINDOW_MINUTES,
   eps: number = POST_REFUEL_VERIFY_EPS_LITERS,
+  retentionFraction: number = RISE_RETENTION_FRACTION,
 ): boolean {
   const windowMs = spikeWindowMinutes * 60 * 1000;
   const postStart = new Date(riseAt.getTime() + windowMs);
   const postEnd = new Date(riseAt.getTime() + 2 * windowMs);
+
+  const totalRise = peakFuel - baselineFuel;
+
+  // Fake only if BOTH the reading fell more than eps below peak AND most of
+  // the rise from baseline was lost — a genuine refuel can settle well below
+  // a motion-noise-inflated peak while still keeping most of the added fuel.
+  const isFake = (fuel: number): boolean => {
+    if (fuel >= peakFuel - eps) return false;
+    if (totalRise <= 0) return true;
+    return (fuel - baselineFuel) / totalRise < retentionFraction;
+  };
 
   const postReadings = allRows.filter(
     (r) => r.ts > postStart && r.ts <= postEnd,
@@ -555,10 +580,9 @@ export function isPostRefuelFallback(
       (r) => r.ts > postStart && r.ts <= extendedEnd,
     );
     if (!firstExtended) return false; // still no data → assume sustained
-    return firstExtended.fuel < peakFuel - eps;
+    return isFake(firstExtended.fuel);
   }
 
   const lastPostFuel = postReadings[postReadings.length - 1].fuel;
-  // Fell back more than eps from peak → fake jerk
-  return lastPostFuel < peakFuel - eps;
+  return isFake(lastPostFuel);
 }

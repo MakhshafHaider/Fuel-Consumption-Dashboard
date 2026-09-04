@@ -15,7 +15,10 @@ import {
   DataRow,
   DynamicTableQueryService,
 } from '../../fuel/services/dynamic-table-query.service';
-import { TripAnalyzerService } from '../../fuel/services/trip-analyzer.service';
+import {
+  TripAnalyzerService,
+  normalizeTripFuelToPeriod,
+} from '../../fuel/services/trip-analyzer.service';
 import { TheftDetectionService } from '../../fuel/services/theft-detection.service';
 import {
   AssignmentRecord,
@@ -287,6 +290,16 @@ export class MasterReportService {
       ? periodConsumed(consumption)
       : burn.totalConsumed;
 
+    // Trips' raw per-trip fuel (a drop-sum within each trip window) can
+    // inflate under sensor oscillation just like the whole-period drop sum
+    // did — normalize it against the same reliable mass balance the "fuel"
+    // section above uses, so a trip's figure here never disagrees with the
+    // /reports/trips report for the same trip.
+    const normalizedTripFuel =
+      tripAnalysis && consumption
+        ? normalizeTripFuelToPeriod(tripAnalysis, consumption)
+        : null;
+
     const excursions = analysed.flatMap((a) => a.excursions);
     const stopTotals = analysed.reduce(
       (acc, a) => ({
@@ -382,10 +395,14 @@ export class MasterReportService {
       trips: {
         totalTrips: tripAnalysis?.totalTrips ?? 0,
         totalDistanceKm: tripAnalysis?.totalDistanceKm ?? 0,
-        totalFuelConsumed: tripAnalysis?.totalFuelConsumed ?? 0,
+        totalFuelConsumed:
+          normalizedTripFuel?.tripFuelConsumed ??
+          tripAnalysis?.totalFuelConsumed ??
+          0,
         totalDurationMinutes: tripAnalysis?.totalDurationMinutes ?? 0,
-        avgKmPerLiter: tripAnalysis?.avgKmPerLiter ?? null,
-        items: tripAnalysis?.trips ?? [],
+        avgKmPerLiter:
+          normalizedTripFuel?.avgKmPerLiter ?? tripAnalysis?.avgKmPerLiter ?? null,
+        items: normalizedTripFuel?.trips ?? tripAnalysis?.trips ?? [],
       },
 
       theft: theft
