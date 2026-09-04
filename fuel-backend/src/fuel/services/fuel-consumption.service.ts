@@ -100,6 +100,30 @@ export interface ConsumptionResult {
   readings?: FuelReading[];
 }
 
+/**
+ * Fuel actually burned over a period, by mass balance:
+ *   consumed = (firstFuel + refueled) − lastFuel  ==  netDrop + refueled
+ *
+ * This is the number the Routes "Period Summary" shows, and it is preferred
+ * over summing individual drop events because sensor oscillation inflates the
+ * drop sum badly on a moving vehicle.
+ *
+ * Falls back to the drop sum when the balance is unusable:
+ *   • no period boundaries (netDrop === null), or
+ *   • a balance of zero or less — the tank ended fuller than it started, which
+ *     only happens via a refuel, so a non-positive balance means the fill was
+ *     missed by refuel detection (or clipped by a calibration table that
+ *     saturates below the tank's real capacity). Without this fallback the
+ *     clamp at zero reports "no fuel used" for a period that plainly had some.
+ */
+export function periodConsumed(
+  result: Pick<ConsumptionResult, 'netDrop' | 'refueled' | 'consumed'>,
+): number {
+  if (result.netDrop === null) return result.consumed;
+  const balance = result.netDrop + result.refueled;
+  return balance > 0 ? balance : result.consumed;
+}
+
 export interface FcrConfig {
   source?: string;
   measurement?: string;
@@ -469,6 +493,10 @@ export class FuelConsumptionService {
         // find the true peak (Python polls every 20 s and tracks peak_fuel until
         // fuel stabilises or max-track time elapses).
         let peakFuel = fuel;
+        // Timestamp at which the peak was actually reached. The fill itself
+        // ends here — everything after is settling / driving away — so this is
+        // the right upper bound for the stationary check below.
+        let peakTs = transformed[i].ts;
         let k = i + 1;
         // Track whether fuel fell back below the rise threshold WITHIN the
         // consolidation window — a strong indicator of a sensor fake-spike
@@ -481,6 +509,7 @@ export class FuelConsumptionService {
           const nextFuel = transformed[k].fuel;
           if (nextFuel > peakFuel) {
             peakFuel = nextFuel;
+            peakTs = transformed[k].ts;
           } else if (nextFuel < baselineFuel + RISE_THRESHOLD) {
             // Fuel fell back below the rise threshold within the window.
             // Only flag as fake if the drop from peak exceeds the post-refuel
@@ -528,17 +557,17 @@ export class FuelConsumptionService {
             !recoveryRise &&
             isPostRefuelFallback(consolidationEndTs, peakFuel, transformed);
           // ── Layer D: movement veto (shared with dashboard/reports paths) ──────
-          // If vehicle is moving through refuel window, treat as non-stationary
-          // spike instead of station refuel.
+          // A station refuel happens while the vehicle is standing still, so a
+          // rise the vehicle never stopped for is a sloshing artefact.
+          // Scoped to the fill itself — [baselineTs, peakTs] — NOT the padded
+          // consolidation window: that spanned ~29 min (7 min + 15 min + 7 min)
+          // and therefore always caught the driving before/after a mid-trip
+          // refuel, vetoing every genuine station stop.
           const movementDuringRefuel =
             !fakeRise &&
             !recoveryRise &&
             !postFallback &&
-            this.hasMovementDuringRefuelWindow(
-              baselineTs,
-              consolidationEndTs,
-              raw,
-            );
+            this.hasMovementDuringRefuelWindow(baselineTs, peakTs, raw);
 
           this.logger.log(
             `[RISE] IMEI ${imei} at ${baselineTs.toISOString()}: ` +
@@ -582,30 +611,29 @@ export class FuelConsumptionService {
     return { drops, refuels, firstFuel, lastFuel, readings: raw };
   }
 
+  /**
+   * True when the vehicle never stood still while the fuel level rose —
+   * i.e. the rise cannot be a station refuel.
+   *
+   * Uses the SLOWEST reading in the fill window, not the fastest: a real
+   * refuel starts with the vehicle pulling in and ends with it pulling away,
+   * so a single moving sample either side must not veto the event. What
+   * matters is whether it came to a stop at all while the level climbed.
+   */
   private hasMovementDuringRefuelWindow(
     riseAt: Date,
-    consolidationEndAt: Date,
+    peakAt: Date,
     readings: FuelReading[],
   ): boolean {
-    const windowStart = new Date(
-      riseAt.getTime() - SPIKE_WINDOW_MINUTES * 60 * 1000,
-    );
-    const windowEnd = new Date(
-      consolidationEndAt.getTime() + SPIKE_WINDOW_MINUTES * 60 * 1000,
-    );
-    const maxSpeed = readings
-      .filter((r) => r.ts >= windowStart && r.ts <= windowEnd)
-      .reduce(
-        (max, r) =>
-          Math.max(
-            max,
-            typeof r.speed === 'number' && Number.isFinite(r.speed)
-              ? r.speed
-              : 0,
-          ),
-        0,
+    const speeds = readings
+      .filter((r) => r.ts >= riseAt && r.ts <= peakAt)
+      .map((r) =>
+        typeof r.speed === 'number' && Number.isFinite(r.speed) ? r.speed : 0,
       );
-    return maxSpeed > REFUEL_MOVEMENT_MAX_SPEED_KMH;
+
+    if (!speeds.length) return false; // no speed data → cannot veto
+
+    return Math.min(...speeds) > REFUEL_MOVEMENT_MAX_SPEED_KMH;
   }
 
   private calculateRefuelWindowBounds(

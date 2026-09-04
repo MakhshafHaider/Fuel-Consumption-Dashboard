@@ -281,9 +281,9 @@ export class FuelAnomalyMiddleware implements NestMiddleware {
         isAnomaly: true,
         anomalyType: 'movement_during_refuel',
         confidence: 75,
-        reason: `Vehicle moving at ${movementCheck.maxSpeedDuring.toFixed(
-          1,
-        )} km/h during refuel window - not at a station`,
+        reason:
+          `Vehicle never stopped during the refuel window ` +
+          `(peak ${movementCheck.maxSpeedDuring.toFixed(1)} km/h) - not at a station`,
       };
     }
 
@@ -406,11 +406,20 @@ export class FuelAnomalyMiddleware implements NestMiddleware {
     const beforeRise = windowReadings.filter((r) => r.ts <= riseAt);
     const afterRise = windowReadings.filter((r) => r.ts > riseAt);
 
-    const maxSpeedDuring = Math.max(...beforeRise.map((r) => r.speed ?? 0), 0);
+    const speedsBefore = beforeRise.map((r) => r.speed ?? 0);
+    const maxSpeedDuring = Math.max(...speedsBefore, 0);
     const maxSpeedAfter = Math.max(...afterRise.map((r) => r.speed ?? 0), 0);
 
+    // The vehicle must have STOPPED for the rise to be a station refuel, so
+    // judge on the slowest sample in the run-up, not the fastest. Using the
+    // max vetoed every genuine mid-trip fill: the drive to the pump is almost
+    // always inside the 7-minute look-back.
+    const hadMovementDuring =
+      speedsBefore.length > 0 &&
+      Math.min(...speedsBefore) > this.RISE_GATING_MAX_SPEED_KMH;
+
     return {
-      hadMovementDuring: maxSpeedDuring > this.RISE_GATING_MAX_SPEED_KMH,
+      hadMovementDuring,
       hadMovementAfter: maxSpeedAfter > this.RISE_GATING_MAX_SPEED_KMH,
       maxSpeedDuring,
       maxSpeedAfter,

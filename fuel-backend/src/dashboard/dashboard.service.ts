@@ -3,7 +3,10 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { FuelSensorResolverService, FuelSensor } from '../fuel/services/fuel-sensor-resolver.service';
-import { FuelConsumptionService } from '../fuel/services/fuel-consumption.service';
+import {
+  FuelConsumptionService,
+  periodConsumed,
+} from '../fuel/services/fuel-consumption.service';
 import { DynamicTableQueryService } from '../fuel/services/dynamic-table-query.service';
 import { FuelTransformService } from '../fuel/services/fuel-transform.service';
 import { ThriftService } from '../fuel/services/thrift.service';
@@ -164,14 +167,9 @@ export class DashboardService {
           v.fcr ?? '',
         );
 
-        // Mass-balance: actual fuel used = netDrop + refueled (matches the
-        // Routes "Period Summary"); fall back to drop-sum when boundaries are
-        // unavailable.
-        if (result.netDrop !== null) {
-          consumed = Math.max(0, result.netDrop + result.refueled);
-        } else {
-          consumed = result.consumed;
-        }
+        // Mass-balance (matches the Routes "Period Summary"), falling back to
+        // the drop sum when the balance is unusable — see periodConsumed().
+        consumed = periodConsumed(result);
         refueled = result.refueled;
         cost = result.estimatedCost;
 

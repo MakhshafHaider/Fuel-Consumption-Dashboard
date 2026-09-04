@@ -6,7 +6,10 @@ import {
   FuelSensor,
   FuelSensorResolverService,
 } from '../../fuel/services/fuel-sensor-resolver.service';
-import { FuelConsumptionService } from '../../fuel/services/fuel-consumption.service';
+import {
+  FuelConsumptionService,
+  periodConsumed,
+} from '../../fuel/services/fuel-consumption.service';
 import { FuelTransformService } from '../../fuel/services/fuel-transform.service';
 import {
   DataRow,
@@ -280,10 +283,8 @@ export class MasterReportService {
     );
 
     const unit = sensor?.units || consumption?.unit || 'L';
-    const periodConsumed = consumption
-      ? consumption.netDrop !== null
-        ? Math.max(0, consumption.refueled + consumption.netDrop)
-        : consumption.consumed
+    const periodConsumedLiters = consumption
+      ? periodConsumed(consumption)
       : burn.totalConsumed;
 
     const excursions = analysed.flatMap((a) => a.excursions);
@@ -335,7 +336,7 @@ export class MasterReportService {
 
       fuel: {
         unit,
-        consumed: round2(periodConsumed),
+        consumed: round2(periodConsumedLiters),
         refueled: round2(consumption?.refueled ?? 0),
         refuelEventCount: consumption?.refuelEvents ?? 0,
         estimatedCost: consumption?.estimatedCost ?? null,
@@ -359,8 +360,8 @@ export class MasterReportService {
           analysed.reduce((s, a) => s + a.stats.distanceKm, 0),
         ),
         kmPerLiter:
-          periodConsumed > 0 && movement.distanceKm > 0
-            ? round2(movement.distanceKm / periodConsumed)
+          periodConsumedLiters > 0 && movement.distanceKm > 0
+            ? round2(movement.distanceKm / periodConsumedLiters)
             : null,
         maxSpeedKmh: round2(movement.maxSpeed),
         avgMovingSpeedKmh: round2(movement.avgMovingSpeed),

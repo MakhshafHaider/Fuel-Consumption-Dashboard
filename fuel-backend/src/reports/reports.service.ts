@@ -3,7 +3,10 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { FuelSensorResolverService } from '../fuel/services/fuel-sensor-resolver.service';
-import { FuelConsumptionService } from '../fuel/services/fuel-consumption.service';
+import {
+  FuelConsumptionService,
+  periodConsumed,
+} from '../fuel/services/fuel-consumption.service';
 import { FuelTransformService } from '../fuel/services/fuel-transform.service';
 import { DynamicTableQueryService } from '../fuel/services/dynamic-table-query.service';
 import { ThriftService } from '../fuel/services/thrift.service';
@@ -127,13 +130,8 @@ export class ReportsService {
           );
 
           // Align with Routes page mass-balance:
-          // consumed = (firstFuel + refueled) - lastFuel
-          // i.e. refueled + netDrop, clamped at zero.
-          // This matches the period summary users see on Routes.
-          const consumed =
-            result.netDrop !== null
-              ? Math.max(0, result.refueled + result.netDrop)
-              : result.consumed;
+          // consumed = (firstFuel + refueled) - lastFuel, i.e. refueled + netDrop.
+          const consumed = periodConsumed(result);
 
           totalConsumed += consumed;
           totalRefueled += result.refueled;
@@ -997,10 +995,7 @@ export class ReportsService {
             ),
           ]);
 
-          const periodFuelConsumed =
-            consumption.netDrop !== null
-              ? Math.max(0, consumption.refueled + consumption.netDrop)
-              : consumption.consumed;
+          const periodFuelConsumed = periodConsumed(consumption);
           const rawTripFuelConsumed = analysis.totalFuelConsumed;
           const tripFuelScale =
             rawTripFuelConsumed > 0 && rawTripFuelConsumed > periodFuelConsumed
